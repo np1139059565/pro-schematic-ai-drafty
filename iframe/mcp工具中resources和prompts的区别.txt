@@ -1,0 +1,227 @@
+prompts 和 resources 虽然都是提供信息给 Cursor，但用途和使用方式完全不同：
+
+Resources (资源)
+本质
+静态或动态的数据源，类似于"文件系统"或"数据库"
+
+主要用途
+提供结构化数据供 AI 读取和引用
+作为上下文信息被动地等待访问
+类似于"文档"、"配置"、"数据"
+使用场景
+用户: "查看 users 表的结构"
+Cursor: 
+  1. 调用 resources/list 找到 "postgres://tables/users"
+  2. 调用 resources/read 读取表结构
+  3. 展示给用户
+
+用户: "基于当前的 API 文档写一个客户端"
+Cursor:
+  1. 读取 resource "api://docs/endpoints"
+  2. 获取 API 定义
+  3. 生成代码
+典型示例
+
+{
+  "resources": [
+    {
+      "uri": "postgres://tables/users",
+      "name": "Users Table Schema",
+      "description": "用户表的结构定义",
+      "mimeType": "application/json"
+    },
+    {
+      "uri": "file:///project/api-spec.json",
+      "name": "API Specification",
+      "description": "REST API 接口文档",
+      "mimeType": "application/json"
+    }
+  ]
+}
+读取后得到的纯数据：
+
+
+{
+  "table": "users",
+  "columns": [
+    {"name": "id", "type": "integer"},
+    {"name": "email", "type": "varchar"}
+  ]
+}
+特点
+✅ 被动访问 - AI 需要时才读取
+✅ 数据为主 - 返回的是原始数据
+✅ 可订阅 - 支持 resources/subscribe 监听变化
+✅ URI 标识 - 通过 URI 唯一定位
+❌ 无交互 - 只读取，不执行操作
+Prompts (提示模板)
+本质
+预定义的对话模板或工作流，类似于"快捷指令"或"宏"
+
+主要用途
+提供结构化的提示词模板
+封装常见工作流和最佳实践
+引导用户快速开始特定任务
+使用场景
+用户: 在 Cursor 中选择 "分析数据库表" 提示
+Cursor:
+  1. 调用 prompts/get 获取 "analyze_table" 模板
+  2. 填充用户提供的参数（表名）
+  3. 直接启动一段预设的对话流程
+  
+结果：自动开始一个完整的表分析工作流
+典型示例
+
+{
+  "prompts": [
+    {
+      "name": "analyze_table",
+      "description": "分析数据库表并提供优化建议",
+      "arguments": [
+        {
+          "name": "table_name",
+          "description": "要分析的表名",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "debug_error",
+      "description": "分析错误日志并提供修复方案",
+      "arguments": [
+        {
+          "name": "error_log",
+          "description": "错误日志内容",
+          "required": true
+        }
+      ]
+    }
+  ]
+}
+获取提示模板后得到的完整对话：
+
+
+{
+  "description": "分析 users 表",
+  "messages": [
+    {
+      "role": "user",
+      "content": {
+        "type": "text",
+        "text": "请详细分析 'users' 表的结构，检查以下方面：\n1. 索引优化建议\n2. 数据类型是否合理\n3. 是否存在冗余字段\n4. 查询性能优化建议\n\n请使用 query_database 工具查看表结构，然后给出专业建议。"
+      }
+    }
+  ]
+}
+特点
+✅ 主动触发 - 用户主动选择执行
+✅ 工作流为主 - 返回的是预设对话流程
+✅ 可参数化 - 支持动态参数填充
+✅ 引导式 - 帮助用户正确使用工具
+✅ 最佳实践 - 封装专家级的使用方式
+核心区别对比
+维度	Resources	Prompts
+角色	数据提供者	工作流模板
+内容	原始数据（表结构、文档等）	对话模板（如何使用这些数据）
+访问方式	AI 按需读取	用户主动触发
+返回值	纯数据	完整的消息序列
+参数	无参数（URI 定位）	支持动态参数
+使用时机	运行时自动引用	开始新任务时选择
+类比	文件/数据库	快捷指令/脚本
+实际例子对比
+场景：数据库表分析
+使用 Resource
+
+// Resource 定义
+window.cmcp.resources_list = () => ({
+  resources: [{
+    uri: "postgres://tables/users",
+    name: "Users Table",
+    description: "用户表结构"
+  }]
+});
+window.cmcp.resources_read = (params) => ({
+  contents: [{
+    uri: params.uri,
+    text: JSON.stringify({
+      columns: [
+        {name: "id", type: "int"},
+        {name: "email", type: "varchar"}
+      ]
+    })
+  }]
+});
+// 用户使用：
+// "帮我看看 users 表的结构"
+// → AI 自动读取 resource
+// → 展示表结构
+使用 Prompt
+
+// Prompt 定义
+window.cmcp.prompts_list = () => ({
+  prompts: [{
+    name: "analyze_table",
+    description: "全面分析数据库表",
+    arguments: [
+      {name: "table_name", required: true}
+    ]
+  }]
+});
+window.cmcp.prompts_get = (params) => ({
+  messages: [{
+    role: "user",
+    content: {
+      type: "text",
+      text: `请按以下步骤分析 '${params.arguments.table_name}' 表：
+      1. 使用 query_database 工具查询表结构
+      2. 检查是否有合适的索引
+      3. 评估数据类型选择
+      4. 提供优化建议
+      5. 如果发现问题，生成 SQL 修复脚本`
+    }
+  }]
+});
+// 用户使用：
+// 在 Cursor 界面选择 "analyze_table" prompt
+// → 输入表名 "users"
+// → 启动预设的完整分析流程
+何时使用哪个？
+用 Resources 当：
+✅ 提供静态或半静态数据（文档、配置、表结构）
+✅ AI 需要自动引用上下文
+✅ 数据会动态变化（需要订阅）
+✅ 作为其他工具的输入来源
+用 Prompts 当：
+✅ 提供复杂工作流模板
+✅ 用户需要快速开始常见任务
+✅ 封装最佳实践和专业知识
+✅ 需要多步骤引导
+✅ 集成多个工具的组合使用
+组合使用示例
+
+// Resource: 提供日志数据
+window.cmcp.resources_list = () => ({
+  resources: [{
+    uri: "logs://error/latest",
+    name: "最新错误日志"
+  }]
+});
+// Prompt: 使用日志进行调试
+window.cmcp.prompts_list = () => ({
+  prompts: [{
+    name: "debug_from_logs",
+    description: "基于错误日志进行调试"
+  }]
+});
+window.cmcp.prompts_get = () => ({
+  messages: [{
+    role: "user",
+    content: {
+      type: "text",
+      text: "请读取 logs://error/latest 资源，分析错误原因，并提供修复方案"
+    }
+  }]
+});
+这样 Prompt 就可以引导 AI 去读取 Resource！
+
+总结：Resources 是"数据库"，Prompts 是"操作手册"。

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-Hans">
+	<head>
+		<title>原理图设计 AI 助手</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="stylesheet" href="/iframe/ai-chat.css" />
+	</head>
+	<body>
+		<div class="chat-container">
+			<!-- 标题栏 -->
+			<div class="chat-header">
+				<h2>原理图设计 AI 助手</h2>
+				<div class="header-buttons">
+					<button id="configBtn" class="config-btn" title="配置 ARK API">配置</button>
+					<button id="clearBtn" class="clear-btn" title="清空对话">清空</button>
+				</div>
+			</div>
+
+			<!-- 消息显示区域 -->
+			<div id="messagesContainer" class="messages-container">
+				<div class="welcome-message">
+					<p>🔌 你好！我是原理图设计 AI 助手，专门帮助你进行原理图设计。</p>
+					<p>我可以帮你：</p>
+					<ul style="text-align: left; display: inline-block; margin-top: 8px">
+						<li>解答原理图设计相关问题</li>
+						<li>提供元件选型建议</li>
+						<li>分析电路设计方案</li>
+						<li>优化原理图布局</li>
+					</ul>
+					<p style="margin-top: 12px">请输入你的原理图设计问题，我会尽力帮助你！</p>
+				</div>
+			</div>
+
+			<!-- 输入区域 -->
+			<div class="input-container">
+				<div class="input-wrapper">
+					<textarea id="messageInput" class="message-input" placeholder="输入你的原理图设计问题..." rows="3"></textarea>
+					<button id="stopBtn" class="stop-btn" title="停止生成" style="display: none">停止</button>
+					<button id="sendBtn" class="send-btn" title="发送消息 (Enter)">发送</button>
+				</div>
+				<div class="status-bar">
+					<span id="statusText" class="status-text"></span>
+				</div>
+			</div>
+		</div>
+
+		<!-- 配置对话框 -->
+		<div id="configDialog" class="config-dialog" style="display: none">
+			<div class="config-overlay"></div>
+			<div class="config-content">
+				<div class="config-header">
+					<h3>ARK API 配置</h3>
+					<button class="config-close-btn" id="configCloseBtn" title="关闭">×</button>
+				</div>
+				<div class="config-body">
+					<div class="config-item">
+						<label for="arkApiKeyInput">ARK API Key:</label>
+						<input type="text" id="arkApiKeyInput" class="config-input" placeholder="请输入 ARK API Key" />
+					</div>
+					<div class="config-item">
+						<label for="arkModelInput">ARK Model:</label>
+						<input type="text" id="arkModelInput" class="config-input" placeholder="请输入 ARK Model" />
+					</div>
+				</div>
+				<div class="config-footer">
+					<button id="configSaveBtn" class="config-save-btn">保存</button>
+					<button id="configCancelBtn" class="config-cancel-btn">取消</button>
+				</div>
+			</div>
+		</div>
+
+		<script src="/iframe/ark-api.js"></script>
+		<script src="/iframe/jdb.js"></script>
+		<script src="/iframe/mcp-eda.js"></script>
+		<script src="/iframe/ai-chat.js"></script>
+	</body>
+</html>

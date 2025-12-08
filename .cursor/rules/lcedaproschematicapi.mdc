@@ -1,0 +1,362 @@
+---
+description: LCEDA Pro 原理图 API 规范使用规则
+alwaysApply: false
+---
+
+# LCEDA Pro 原理图 API 规范使用规则
+
+> **适用范围**：使用Cursor AI进行LCEDA Pro原理图自动化设计的所有场景  
+> **规则基础**：基于LCEDA Pro官方API文档和源码规范  
+> **执行优先级**：在涉及LCEDA Pro API调用时，必须严格遵循本规则
+
+## API基础规范
+
+### API对象访问规范
+
+- **标准访问方式**：必须使用 `const api = window.top.eda1;` 访问API对象
+- **上下文检查**：在调用API前，必须确保在LCEDA Pro编辑器环境中
+- **禁止行为**：禁止在非LCEDA环境中调用API，会导致运行时错误
+
+### API模块结构理解
+
+- **模块化调用**：必须使用模块化的API调用方式，禁止直接访问内部实现
+- **职责边界**：理解各模块的职责边界，禁止跨模块的非法调用
+- **接口限制**：只使用公开的接口，禁止假设API的内部实现细节
+
+## 元件库操作规范
+
+### 元件搜索 - lib_Device.search()
+
+#### 参数使用规范
+
+- **keyword参数**：必填，支持中文和英文关键词（如 "ESP32"、"电阻"、"GPS"）
+- **libraryUuid参数**：⚠️ **关键规则**：如果传分页参数（itemsOfPage/page），则该参数必选；如果只搜索关键词则可选
+- **分页参数规则**：
+    - ✅ **正确用法1**：只搜索关键词，不传分页参数
+        ```javascript
+        const results = await api.lib_Device.search('ESP32');
+        ```
+    - ✅ **正确用法2**：带分页参数时，必须提供libraryUuid
+        ```javascript
+        const results = await api.lib_Device.search(
+        	'ESP32',
+        	api.lib_LibrariesList.extensionUuid, // 必须提供
+        	null,
+        	null,
+        	20,
+        	1,
+        );
+        ```
+    - ❌ **错误用法**：带分页参数但未提供libraryUuid（这样查不到任何元件）
+        ```javascript
+        const results = await api.lib_Device.search('ESP32', null, null, null, 20, 1);
+        ```
+
+#### 返回值处理规范
+
+- **必须检查**：调用search()后必须检查返回结果是否为空
+- **错误处理**：如果results.length === 0，必须输出错误信息并返回
+- **UUID使用**：从返回结果中获取的`uuid`是设备UUID，用于后续的create()操作
+
+### 通过LCSC编号获取元件 - lib_Device.getByLcscIds()
+
+- **批量操作**：优先使用批量获取方式，提高效率
+- **参数规范**：lcscIds必须是数组格式，libraryUuid可选
+
+## 原理图操作规范
+
+### 放置原理图元件 - sch_PrimitiveComponent.create()
+
+#### UUID使用规范（⚠️ 最高优先级）
+
+- **必须使用设备UUID**：create()方法必须使用`component.uuid`（设备UUID），**禁止**使用`component.symbolUuid`
+- **错误示例**：使用symbolUuid会导致API调用失败
+    ```javascript
+    // ❌ 错误：使用symbolUuid
+    const component = await api.sch_PrimitiveComponent.create(
+        { uuid: device.symbolUuid, libraryUuid: device.libraryUuid },
+        ...
+    );
+    ```
+- **正确示例**：
+    ```javascript
+    // ✅ 正确：使用设备UUID
+    const component = await api.sch_PrimitiveComponent.create(
+        { uuid: device.uuid, libraryUuid: device.libraryUuid },
+        ...
+    );
+    ```
+
+#### subPartName参数规范（⚠️ 必须遵守）
+
+- **必须提供**：subPartName参数必须提供，即使是空字符串`""`
+- **参数错位风险**：不提供subPartName会导致后续参数错位，造成严重错误
+- **正确用法**：
+    ```javascript
+    const component = await api.sch_PrimitiveComponent.create(
+    	{ uuid: device.uuid, libraryUuid: device.libraryUuid },
+    	1000,
+    	2000,
+    	'',
+    	0,
+    	false,
+    	true,
+    	true, // subPartName: ""（必须提供）
+    );
+    ```
+
+#### 坐标范围检查规范
+
+- **画布大小获取**：在放置元件前，必须获取并解析画布大小
+- **坐标验证**：确保所有坐标在画布范围内，严禁超出画布范围
+- **实现方式**：
+    ```javascript
+    const footprintSources = await api.sys_FileManager.getDocumentFootprintSources();
+    const { width, height } = parseCanvasSize(footprintSources[0].documentSource);
+    const x = Math.max(0, Math.min(width, targetX));
+    const y = Math.max(0, Math.min(height, targetY));
+    ```
+
+#### done()方法调用规范（⚠️ 必须遵守）
+
+- **必须调用**：创建元件后必须调用`done()`方法，否则刷新后无法看到元件
+- **调用时机**：在create()方法返回后立即调用
+- **正确用法**：
+    ```javascript
+    const component = await api.sch_PrimitiveComponent.create(...);
+    await component.done();  // ⚠️ 必须调用
+    ```
+
+### 获取元件引脚 - sch_PrimitiveComponent.getAllPinsByPrimitiveId()
+
+#### Y轴坐标反转规范（⚠️ 必须遵守）
+
+- **坐标反转**：通过`getAllPinsByPrimitiveId()`获取的坐标，y轴是反的
+- **必须处理**：使用引脚坐标时必须对y轴坐标取反
+- **正确用法**：
+    ```javascript
+    const pins = await api.sch_PrimitiveComponent.getAllPinsByPrimitiveId(primitiveId);
+    const pinX = pins[0].x;
+    const pinY = -pins[0].y; // ⚠️ y轴必须取反
+    ```
+- **错误用法**：直接使用会导致坐标错误
+    ```javascript
+    const pinY = pins[0].y; // ❌ 错误！
+    ```
+
+#### 引脚查找规范
+
+- **名称匹配**：通过引脚名称查找时，必须使用大小写不敏感的匹配
+- **常见引脚名称**：
+    - VCC引脚：'VCC'、'VDD'、'POWER'
+    - GND引脚：'GND'、'VSS'、'GROUND'
+
+### 创建原理图连线 - sch_PrimitiveWire.create()
+
+#### 坐标数组连续性规范（⚠️ 必须遵守）
+
+- **连续性要求**：坐标数组必须是连续的，多段线彼此无任何连接则创建将会失败
+- **正确用法**：
+
+    ```javascript
+    // ✅ 正确：连续的两点
+    const wire = await api.sch_PrimitiveWire.create([1000, 2000, 3000, 2000], 'VCC');
+
+    // ✅ 正确：连续的折线（L型连接）
+    const lWire = await api.sch_PrimitiveWire.create([1000, 2000, 2000, 2000, 2000, 3000, 3000, 3000], 'GND');
+    ```
+
+- **错误用法**：
+    ```javascript
+    // ❌ 错误：不连续的坐标
+    const wire = await api.sch_PrimitiveWire.create(
+    	[1000, 2000, 3000, 2000, 5000, 4000],
+    	'VCC', // 不连续
+    );
+    ```
+
+#### 网络名称规范
+
+- **标准命名**：使用标准的网络名称（如 "VCC"、"GND"、"VDD_3V3"等）
+- **命名一致性**：同一网络的名称必须保持一致
+
+## 文档源码解析规范
+
+### 文档源码获取规范
+
+- **必须使用**：无论何时都不应该截图查看布局，而是应该通过获取文档源码来检索布局
+- **获取方法**：
+    ```javascript
+    const footprintSources = await api.sys_FileManager.getDocumentFootprintSources();
+    ```
+
+### 画布大小解析规范
+
+- **格式理解**：文档源码格式为每行`{JSON对象1}||{JSON对象2}`，用`||`分隔
+- **画布信息位置**：画布大小信息在`ATTR`类型中，`key`为`"Width"`和`"Height"`
+- **解析要求**：
+    - 必须从文档源码中解析画布大小
+    - 禁止使用硬编码的画布大小值
+    - 必须处理解析错误，使用默认值作为后备
+
+### 画布范围检查规范（⚠️ 最高优先级）
+
+- **严禁超出**：所有元件和连线的坐标必须在画布范围内
+- **检查时机**：在放置任何元件或创建连线前，必须检查坐标是否在画布范围内
+- **实现方式**：
+    ```javascript
+    const { width, height } = parseCanvasSize(documentSource);
+    const x = Math.max(0, Math.min(width, targetX));
+    const y = Math.max(0, Math.min(height, targetY));
+    ```
+
+## 开发流程规范
+
+### 标准开发流程（必须遵循）
+
+#### 步骤0：画布大小检查（必须）
+
+- **执行时机**：在任何元件操作前
+- **执行内容**：
+    1. 获取文档源码
+    2. 解析画布大小
+    3. 规划元件位置（留出边距，建议10%）
+    4. 验证坐标在画布范围内
+
+#### 步骤1：元件搜索（必须）
+
+- **执行内容**：
+    1. 使用正确的搜索参数
+    2. 检查返回结果是否为空
+    3. 注意分页参数规则
+
+#### 步骤2：元件放置（必须）
+
+- **执行内容**：
+    1. 使用设备UUID（不是symbolUuid）
+    2. 提供subPartName参数（即使是空字符串）
+    3. 调用done()方法保存
+    4. 确保坐标在画布范围内
+
+#### 步骤3：引脚信息获取（必须）
+
+- **执行内容**：
+    1. 使用primitiveId获取引脚
+    2. **必须处理y轴坐标反转**
+    3. 通过引脚名称查找特定引脚
+
+#### 步骤4：连线创建（必须）
+
+- **执行内容**：
+    1. 确保坐标数组连续
+    2. 使用标准的网络名称
+    3. 确保连线在画布范围内
+
+## 常见错误预防规则
+
+### 错误1：元件搜索返回空结果
+
+- **预防措施**：带分页参数时必须提供libraryUuid
+- **检查点**：调用search()后必须检查results.length
+
+### 错误2：元件创建后刷新消失
+
+- **预防措施**：创建元件后必须调用done()方法
+- **检查点**：每个create()调用后必须有对应的done()调用
+
+### 错误3：引脚坐标错误
+
+- **预防措施**：使用引脚坐标时必须对y轴坐标取反
+- **检查点**：所有使用pin.y的地方必须使用-pin.y
+
+### 错误4：连线创建失败
+
+- **预防措施**：确保坐标数组连续
+- **检查点**：创建连线前验证坐标数组的连续性
+
+### 错误5：元件超出画布范围
+
+- **预防措施**：在放置元件前必须检查画布大小
+- **检查点**：所有坐标必须通过Math.max和Math.min限制在画布范围内
+
+### 错误6：使用错误的UUID
+
+- **预防措施**：必须使用device.uuid（设备UUID），禁止使用device.symbolUuid
+- **检查点**：所有create()调用中的uuid必须来自device.uuid
+
+## 代码生成规范
+
+### 函数注释要求
+
+- **必须添加**：为所有函数添加详细的JSDoc注释
+- **注释内容**：包括功能说明、参数列表、返回值说明
+
+### 关键代码注释要求
+
+- **重要提示**：对于容易出错的代码，必须添加⚠️标记的注释
+- **注释位置**：
+    - y轴坐标反转处
+    - done()方法调用处
+    - UUID使用处
+    - 画布范围检查处
+
+### 错误处理规范
+
+- **异常捕获**：所有API调用必须包含try-catch错误处理
+- **参数验证**：在调用API前必须验证参数完整性
+- **错误提示**：错误信息必须清晰明确，包含错误原因和解决方案
+
+### 代码组织规范
+
+- **函数拆分**：当函数代码超过30行时，必须考虑拆分
+- **公共模块**：功能相似度≥70%时，必须提取公共模块
+- **代码复用**：避免重复代码，优先使用已有函数
+
+## 开发检查清单（必须执行）
+
+在生成任何涉及LCEDA Pro API的代码时，必须检查以下项目：
+
+- [ ] API访问方式正确（使用`window.top.eda1`）
+- [ ] 元件搜索参数正确（分页参数规则）
+- [ ] 使用设备UUID（不是symbolUuid）
+- [ ] 提供subPartName参数（即使是空字符串）
+- [ ] 调用done()方法保存元件
+- [ ] 处理y轴坐标反转（使用-pin.y）
+- [ ] 连线坐标数组连续
+- [ ] 检查画布大小
+- [ ] 坐标在画布范围内
+- [ ] 错误处理完善
+- [ ] 代码注释清晰（特别是⚠️标记的关键点）
+
+## 规则执行优先级
+
+1. **最高优先级**（必须严格遵守，违反会导致功能失败）：
+
+    - UUID使用规范（设备UUID vs symbolUuid）
+    - done()方法调用
+    - y轴坐标反转处理
+    - 画布范围检查
+
+2. **高优先级**（必须遵守，违反会导致错误）：
+
+    - subPartName参数提供
+    - 坐标数组连续性
+    - 分页参数规则
+
+3. **中优先级**（建议遵守，提高代码质量）：
+    - 错误处理
+    - 代码注释
+    - 函数拆分
+
+## 规则更新说明
+
+- **规则版本**：v1.0
+- **最后更新**：2024-12-19
+- **基于资料**：
+    - LCEDA*Pro*原理图常用API使用说明.md
+    - LCEDA*Pro_API快速查询*完整版.md
+    - source规范源码1.txt、2.txt、3.txt
+
+---
+
+**重要提示**：本规则文件中的所有规范均基于LCEDA Pro官方API文档和实际源码规范。在生成代码时，必须严格遵循本规则，确保代码的正确性和可靠性。

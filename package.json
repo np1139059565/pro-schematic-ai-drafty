@@ -1,0 +1,48 @@
+{
+	"name": "pro-schematic-ai",
+	"version": "1.1.1",
+	"description": "基于嘉立创EDA专业版扩展API开发的原理图设计AI助手扩展包",
+	"author": "JLCEDA",
+	"license": "Apache-2.0",
+	"homepage": "https://pro.lceda.cn/",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/np1139059565/pro-schematic-ai.git"
+	},
+	"scripts": {
+		"compile": "rimraf ./dist/ && ts-node ./config/esbuild.prod.ts",
+		"prepare": "husky",
+		"prettier:all": "prettier --write .",
+		"eslint:all": "eslint --ext .ts --fix .",
+		"fix": "npm run prettier:all && npm run eslint:all",
+		"build": "npm run compile && ts-node ./build/packaged.ts"
+	},
+	"devDependencies": {
+		"@jlceda/pro-api-types": "^0.1.175",
+		"@microsoft/tsdoc": "^0.15.1",
+		"@trivago/prettier-plugin-sort-imports": "^5.2.1",
+		"@types/fs-extra": "^11.0.4",
+		"@typescript-eslint/eslint-plugin": "^7.18.0",
+		"@typescript-eslint/parser": "^7.18.0",
+		"esbuild": "^0.24.2",
+		"eslint": "^8.57.0",
+		"eslint-config-alloy": "^5.1.2",
+		"eslint-plugin-tsdoc": "^0.4.0",
+		"fs-extra": "^11.3.0",
+		"husky": "^9.1.7",
+		"ignore": "^7.0.3",
+		"jszip": "^3.10.1",
+		"lint-staged": "^15.3.0",
+		"prettier": "^3.4.2",
+		"rimraf": "^6.0.1",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.7.3"
+	},
+	"lint-staged": {
+		"*.ts": "eslint --cache --fix",
+		"*.{js,ts,html,css,json,md}": "prettier --write"
+	},
+	"engines": {
+		"node": ">=20.5.0"
+	}
+}

@@ -1,0 +1,82 @@
+{
+	"name": "pro-schematic-ai",
+	"uuid": "7f5625494d16493692e4532279c15b58",
+	"displayName": "AI 助手",
+	"description": "基于嘉立创EDA专业版扩展API开发的原理图设计AI助手扩展包",
+	"version": "1.0.0",
+	"publisher": "JLCEDA",
+	"engines": {
+		"eda": "^2.3.0"
+	},
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "github",
+		"url": "https://github.com/np1139059565/pro-schematic-ai"
+	},
+	"categories": ["Schematic", "Other"],
+	"keywords": ["AI", "原理图", "EDA", "扩展", "助手", "对话", "自动放置"],
+	"images": {
+		"logo": "./images/logo.png"
+	},
+	"homepage": "https://github.com/np1139059565/pro-schematic-ai",
+	"bugs": "https://github.com/np1139059565/pro-schematic-ai/issues",
+	"activationEvents": {},
+	"entry": "./dist/index",
+	"dependentExtensions": {},
+	"headerMenus": {
+		"home": [
+			{
+				"id": "ai-assistant",
+				"title": "AI 助手",
+				"menuItems": [
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					},
+					{
+						"id": "openAiChat",
+						"title": "原理图设计助手",
+						"registerFn": "openAiChat"
+					}
+				]
+			}
+		],
+		"sch": [
+			{
+				"id": "ai-assistant",
+				"title": "AI 助手",
+				"menuItems": [
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					},
+					{
+						"id": "openAiChat",
+						"title": "原理图设计助手",
+						"registerFn": "openAiChat"
+					}
+				]
+			}
+		],
+		"pcb": [
+			{
+				"id": "ai-assistant",
+				"title": "AI 助手",
+				"menuItems": [
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					},
+					{
+						"id": "openAiChat",
+						"title": "原理图设计助手",
+						"registerFn": "openAiChat"
+					}
+				]
+			}
+		]
+	}
+}
