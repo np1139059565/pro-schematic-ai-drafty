@@ -28,12 +28,14 @@ async function callTool(params) {
 		if (validateResult !== null) {
 			return buildTextResponse(`工具参数验证失败: ${validateResult}`, false);
 		}
-		// 优先调用自定义工具
-		const tool = window.customeTools[name] || eda[className]?.[methodName];
+		// 优先调用自定义工具(自定义工具名称格式为:className$methodName)
+		const tool = window.customeTools[name.replace('.', '$')] || eda[className]?.[methodName];
 
 		// 执行工具处理函数
-		// const result = await tool.handler(args || {});
-		const result = await tool(...Object.values(args) || {});
+		// 自定义工具使用对象参数，原生API使用位置参数
+		const result = window.customeTools[name.replace('.', '$')] 
+			? await tool(args || {})
+			: await tool(...Object.values(args) || {});
 
 		// 包装为符合 MCP 规范的返回格式
 		if (result !== null && ['string', 'number', 'boolean', 'object'].includes(typeof result)) {
@@ -314,11 +316,105 @@ async function getCanvasSize() {
 	};
 }
 
+/**
+ * 元件搜索（遵循分页规则：带 itemsOfPage/page 必须提供 libraryUuid）
+ */
+async function lib_Device$search({ keyword, libraryUuid = null, itemsOfPage = null, page = null }) {
+	if (!keyword || typeof keyword !== 'string') {
+		throw new Error('keyword 必填且为字符串');
+	}
+	// 若传分页参数则必须传 libraryUuid
+	if ((itemsOfPage !== null || page !== null) && !libraryUuid) {
+		throw new Error('使用分页参数时必须提供 libraryUuid');
+	}
+	// 如果没有分页参数,则不传递 itemsOfPage 和 page（连 null 都不能有）
+	let result;
+	if (itemsOfPage === null && page === null) {
+		// 无分页参数,只传递前1个参数
+		result = await eda.lib_Device.search(keyword);
+	} else {
+		// 有分页参数,传递所有6个参数
+		result = await eda.lib_Device.search(keyword, libraryUuid, null, null, itemsOfPage, page);
+	}
+	return { content: result };
+}
+
+/**
+ * 在原理图放置元件（必须使用设备 uuid，subPartName 必填即便为空字符串）
+ */
+async function sch_PrimitiveComponent$create({ uuid, libraryUuid, x, y, subPartName = '', rotation = 0, mirror = false, addIntoBom = true, addIntoPcb = true }) {
+	if (!uuid || !libraryUuid) {
+		throw new Error('uuid 与 libraryUuid 必填且不可为空');
+	}
+	if (typeof subPartName !== 'string') {
+		throw new Error('subPartName 必须为字符串（可为空字符串）');
+	}
+	const comp = await eda.sch_PrimitiveComponent.create(
+		{ uuid, libraryUuid },
+		x,
+		y,
+		subPartName,
+		rotation,
+		mirror,
+		addIntoBom,
+		addIntoPcb,
+	);
+	await comp.done();
+	return { content: comp };
+}
+
+/**
+ * 获取元件引脚列表，可选 y 轴取反
+ */
+async function sch_PrimitiveComponent$getAllPinsByPrimitiveId({ primitiveId, invertY = true }) {
+	if (!primitiveId) {
+		throw new Error('primitiveId 必填');
+	}
+	const pins = await eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(primitiveId);
+	if (invertY) {
+		return { content: pins.map(p => ({ ...p, y: -p.y })) };
+	}
+	return { content: pins };
+}
+
+/**
+ * 创建原理图连线（line 坐标数组必须连续）
+ */
+async function sch_PrimitiveWire$create({ line, net = null, color = '#000000', lineWidth = 1, lineType = 0 }) {
+	if (!Array.isArray(line) || line.length < 4 || line.length % 2 !== 0) {
+		throw new Error('line 必须是长度不少于4且为偶数的坐标数组');
+	}
+	const wire = await eda.sch_PrimitiveWire.create(line, net, color, lineWidth, lineType);
+	return { content: wire };
+}
+
+/**
+ * 获取所有原理图元件
+ */
+async function sch_PrimitiveComponent$getAll({ cmdKey = null, allSchematicPages = false }) {
+	const result = await eda.sch_PrimitiveComponent.getAll(cmdKey, allSchematicPages);
+	return { content: result };
+}
+
+/**
+ * 获取文档封装源码
+ */
+async function sys_FileManager$getDocumentFootprintSources() {
+	const result = await eda.sys_FileManager.getDocumentFootprintSources();
+	return { content: result };
+}
+
 
 
 window.customeTools = {
 	searchTools,
 	getCanvasSize,
+	'lib_Device$search': lib_Device$search,
+	'sch_PrimitiveComponent$create': sch_PrimitiveComponent$create,
+	'sch_PrimitiveComponent$getAllPinsByPrimitiveId': sch_PrimitiveComponent$getAllPinsByPrimitiveId,
+	'sch_PrimitiveComponent$getAll': sch_PrimitiveComponent$getAll,
+	'sch_PrimitiveWire$create': sch_PrimitiveWire$create,
+	'sys_FileManager$getDocumentFootprintSources': sys_FileManager$getDocumentFootprintSources,
 	toolList: [
 		{
 			name: 'searchTools',
@@ -335,6 +431,87 @@ window.customeTools = {
 		{
 			name: 'getCanvasSize',
 			description: '获取图纸边界(画布大小,所有元件/导线不能超过该范围,单位:mil)',
+			inputSchema: {
+				type: 'object',
+				properties: {},
+				required: [],
+			},
+		},
+		{
+			name: 'lib_Device$search',
+			description: '元件搜索；带分页参数(itemsOfPage/page)时必须提供 libraryUuid；返回 lib_Device.search 结果',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					keyword: { type: 'string' },
+					libraryUuid: { type: 'string' },
+					itemsOfPage: { type: 'number' },
+					page: { type: 'number' },
+				},
+				required: ['keyword'],
+			},
+		},
+		{
+			name: 'sch_PrimitiveComponent$create',
+			description: '在原理图放置元件；必须使用设备 uuid 与 libraryUuid，subPartName 必填（可为空字符串），内部自动调用 done() 保存',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					uuid: { type: 'string' },
+					libraryUuid: { type: 'string' },
+					x: { type: 'number' },
+					y: { type: 'number' },
+					subPartName: { type: 'string' },
+					rotation: { type: 'number' },
+					mirror: { type: 'boolean' },
+					addIntoBom: { type: 'boolean' },
+					addIntoPcb: { type: 'boolean' },
+				},
+				required: ['uuid', 'libraryUuid', 'x', 'y'],
+			},
+		},
+		{
+			name: 'sch_PrimitiveComponent$getAllPinsByPrimitiveId',
+			description: '获取元件引脚列表；默认对 y 轴取反以符合画布坐标习惯，可通过 invertY 控制',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					primitiveId: { type: 'string' },
+					invertY: { type: 'boolean' },
+				},
+				required: ['primitiveId'],
+			},
+		},
+		{
+			name: 'sch_PrimitiveComponent$getAll',
+			description: '获取当前原理图页面（或所有页面）中的所有元件列表；可选 cmdKey（筛选条件）和 allSchematicPages（是否获取所有页面）',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					cmdKey: { type: 'string' },
+					allSchematicPages: { type: 'boolean' },
+				},
+				required: [],
+			},
+		},
+		{
+			name: 'sch_PrimitiveWire$create',
+			description: '创建原理图导线；line 必须为连续坐标数组（长度为偶数且不少于4）,例如:[100, 200, 300, 400, 500, 600]',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					line: { type: 'array', items: { type: 'number' } },
+					net: { type: 'string' },
+					color: { type: 'string' },
+					lineWidth: { type: 'number' },
+					lineType: { type: 'number' },
+				},
+				required: ['line'],
+			},
+		},
+		{
+			name: 'sys_FileManager$getDocumentFootprintSources',
+			description: '获取文档中所有封装的源码信息，返回封装UUID和对应的文档源码字符串；可用于解析画布信息、封装数据等',
 			inputSchema: {
 				type: 'object',
 				properties: {},

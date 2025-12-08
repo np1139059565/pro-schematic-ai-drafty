@@ -33,6 +33,9 @@ window.top.systemMessage = `
 MCP工具集:
 - 通过 mcpEDA.listTools()/listResources()/readResource()/callTool(...) 获取或调用工具,工具列表包含搜索工具/画布尺寸等能力
 
+**工具使用规则**:
+- 如果不确定工具名称，必须先调用 mcpEDA.listTools 或 mcpEDA.searchTools 查询可用工具
+- 禁止未查询就使用类似 getComponents、getAllComponents 等不存在的API名称
 
 工作流程:
 1. 分析用户需求:
@@ -56,6 +59,7 @@ MCP工具集:
        - 备用方案:如果无法获取引脚信息,必须至少设置200mil的安全距离,确保元件之间不会重叠
        - 放置新元件时,需要检查与现有元件的位置关系,确保有足够的间距
      * 写入前状态同步:每次执行write代码块之前,必须先执行read代码块获取当前原理图的最新状态,因为原理图随时可能变化,不能使用过时的状态信息
+	 * 导线绘制:绘制导线时,不能压盖元件,必须保证导线与元件之间有足够的间距,导线与导线之间不能重叠.
 
 4. 错误处理策略:
    - 执行错误时:系统会在system消息中返回errorMessage和stack信息
@@ -113,7 +117,9 @@ const resp = { data: null, errorMessage: null, stack: null };
   return resp;
 })();
 
-**注意**:必须返回包含 data/errorMessage/stack 的对象,异步操作使用 await.
+**注意**:
+- 必须返回包含 data/errorMessage/stack 的对象,异步操作使用 await.
+- 每次只能返回一段代码块,不能返回多段代码块.
 
 对话角色:
 本对话系统包含三种角色,你需要清楚理解每种角色的作用:
@@ -250,10 +256,7 @@ function parseAIResponse(response) {
 async function callAIAndHandleResponse(loadingId) {
 	// 如果停止状态为true,直接返回
 	if (isStop) {
-		// 移除加载指示器
-		removeLoadingIndicator(loadingId); // 移除加载动画
-		// 隐藏停止按钮
-		stopBtn.style.display = 'none'; // 隐藏停止按钮
+		switchStop();
 		return; // 直接返回
 	}
 
@@ -445,18 +448,30 @@ async function handleSendMessage() {
 /**
  * 处理停止按钮点击事件
  */
+
 function handleStop() {
 	isStop = true; // 设置为停止状态
+	// 隐藏停止按钮
+	stopBtn.style.display = 'none'; // 隐藏停止按钮
+}
+
+/**
+ * 切换停止状态
+ */
+function switchStop() {
+	// 移除加载指示器
+	removeLoadingIndicator(loadingId); // 移除加载动画
+
 	// 恢复输入和发送按钮
 	setInputDisabled(false); // 恢复输入框
 	messageInput.focus(); // 聚焦到输入框
 
 	// 更新状态
-	updateStatus('已停止生成', 'info'); // 更新状态为已停止
-	setTimeout(() => {
-		// 延迟清空状态
-		updateStatus('', ''); // 清空状态文本
-	}, 2000); // 2 秒后清空
+	// updateStatus('已停止生成', 'info'); // 更新状态为已停止
+	// setTimeout(() => {
+	// 	// 延迟清空状态
+	// 	updateStatus('', ''); // 清空状态文本
+	// }, 2000); // 2 秒后清空
 }
 /**
  * 解析消息内容,提取代码块
