@@ -38,10 +38,10 @@ window.top.systemMessage = `
 
 
 工作流程:
-1.收到user的消息后,先通过代码块查看mcp工具的提示,根据提示中的工作流程来执行。
+1.收到user的消息后,先通过代码块查看mcp工具的提示,根据提示中的工作流程来执行,先查看mcp工具的提示 guideline_workflow_prompt。
 2.如果你打算执行某个操作,请先通过代码块查看mcp工具的提示,根据提示中的工作流程来执行。
 3.必须明确告诉用户,你的操作是基于mcp的哪条提示来执行的,格式为:"根据 [提示名称] 的[描述],我将..."。例如:"根据 guideline_layout_planning_prompt 的前期布局规划提示,我将按功能分组放置元件"。
-4.执行布线操作时,必须遵循 guideline_smart_routing_prompt 和 guideline_routing_constraints_prompt 的要求,在代码中实现最小间距检查(导线-导线>=50mil,导线-元件边界>=100mil)、45°走线优先、碰撞检测等。
+4.执行布线操作时,必须遵循 guideline_smart_routing_prompt 和 guideline_routing_constraints_prompt 的要求,在代码中实现最小间距检查、45°走线优先、碰撞检测等。
 5.完成布线后,必须根据 guideline_drc_repair_prompt 进行DRC校验,检查导线-导线、导线-元件、导线-引脚、拐角锐角、最小间距等违规情况,并修正违规线。
 
 回复要求:
