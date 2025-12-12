@@ -194,11 +194,14 @@ async function getPrompt(params) {
 
 	// 从提示列表中查找提示(如果arguments不为空,则查找arguments.name对应的提示)
 	const prompt = window.jdbPromptList.find(prompt => prompt.name === name);
-	const messages = prompt.messages.filter(message => _args != null ? message.role === _args.name : true);
+	if (!prompt) {
+		throw new Error(`提示不存在: ${name}`);
+	}
+	const messages = prompt?.messages.filter(message => _args != null ? message.role === _args.name : true) || [];
 
 	// 返回符合 MCP 规范的格式
 	return {
-		description: prompt.description,
+		description: prompt?.description || '',
 		messages: messages
 	};
 }
@@ -271,7 +274,7 @@ function searchTools({ keywords }) {
 		.map(result => {
 			const customApiName = result.name.replace('$', '.');
 			if (window.customeTools[customApiName] !== null) {
-				return window.customeTools[customApiName];
+				return window.customeTools.toolList.find(tool => tool.name === customApiName);
 			}
 			return result;
 		});
@@ -346,7 +349,25 @@ async function lib_Device$search({ keyword, libraryUuid = null, itemsOfPage = nu
 		// 有分页参数,传递所有6个参数
 		result = await eda.lib_Device.search(keyword, libraryUuid, null, null, itemsOfPage, page);
 	}
-	return { content: result };
+	return {
+		content: {
+			type: 'array',
+			items: result.map(item =>
+			({
+				type: 'object',
+				properties: {
+					uuid: {
+						type: 'string',
+						value: item.uuid
+					},
+					libraryUuid: {
+						type: 'string',
+						value: item.libraryUuid
+					}
+				}
+			}))
+		}
+	};
 }
 
 /**
@@ -370,7 +391,12 @@ async function sch_PrimitiveComponent$create({ uuid, libraryUuid, x, y, subPartN
 		addIntoPcb,
 	);
 	await comp.done();
-	return { content: comp };
+	return {
+		content: {
+			type: 'text',
+			primitiveId: comp.getState_PrimitiveId()
+		}
+	};
 }
 
 /**
@@ -381,7 +407,12 @@ async function sch_PrimitiveComponent$delete({ primitiveIds }) {
 		throw new Error('primitiveIds 必填');
 	}
 	const result = await eda.sch_PrimitiveComponent.delete(primitiveIds);
-	return { content: result };
+	return {
+		content: {
+			type: 'text',
+			text: ''
+		}
+	};
 }
 
 /**
@@ -389,7 +420,29 @@ async function sch_PrimitiveComponent$delete({ primitiveIds }) {
  */
 async function sch_PrimitiveComponent$getAll({ cmdKey = null, allSchematicPages = false }) {
 	const result = await eda.sch_PrimitiveComponent.getAll(cmdKey, allSchematicPages);
-	return { content: result };
+	return {
+		content: {
+			type: 'array',
+			items: result.map(item =>
+			({
+				type: 'object',
+				properties: {
+					primitiveId: {
+						type: 'string',
+						value: item.primitiveId
+					},
+					x: {
+						type: 'number',
+						value: item.x
+					},
+					y: {
+						type: 'number',
+						value: item.y
+					}
+				}
+			}))
+		}
+	};
 }
 
 /**
@@ -400,10 +453,8 @@ async function sch_PrimitiveComponent$getAllPinsByPrimitiveId({ primitiveId, inv
 		throw new Error('primitiveId 必填');
 	}
 	const pins = await eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(primitiveId);
-	if (invertY) {
-		return { content: pins.map(p => ({ ...p, y: -p.y })) };
-	}
-	return { content: pins };
+
+	return { content: pins.map(p => ({ x: p.x, y: (invertY ? -p.y : p.y) })) };
 }
 
 /**
@@ -417,7 +468,7 @@ async function sch_PrimitiveComponent$modify({ primitiveId, property }) {
 		throw new Error('property 必填且必须为对象');
 	}
 	const comp = await eda.sch_PrimitiveComponent.modify(primitiveId, property);
-	return { content: comp };
+	return { content: { type: 'text', primitiveId: comp.getState_PrimitiveId() } };
 }
 
 /**
@@ -431,7 +482,7 @@ async function sch_PrimitiveWire$create({ line, net = null, color = '#000000', l
 		throw new Error('color 可以不传,但必须不能为null或undefined');
 	}
 	const wire = await eda.sch_PrimitiveWire.create(line, net, color, lineWidth, lineType);
-	return { content: wire };
+	return { content: { type: 'text', text: '' } };
 }
 
 /**
@@ -442,7 +493,7 @@ async function sch_PrimitiveWire$delete({ primitiveIds }) {
 		throw new Error('primitiveIds 必填');
 	}
 	const result = await eda.sch_PrimitiveWire.delete(primitiveIds);
-	return { content: result };
+	return { content: { type: 'text', text: '' } };
 }
 
 /**
@@ -450,7 +501,7 @@ async function sch_PrimitiveWire$delete({ primitiveIds }) {
  */
 async function sch_PrimitiveWire$getAll({ net = null }) {
 	const result = await eda.sch_PrimitiveWire.getAll(net);
-	return { content: result };
+	return { content: { type: 'array', items: result } };
 }
 
 /**
@@ -464,7 +515,7 @@ async function sch_PrimitiveWire$modify({ primitiveId, property }) {
 		throw new Error('property 必填且必须为对象');
 	}
 	const wire = await eda.sch_PrimitiveWire.modify(primitiveId, property);
-	return { content: wire };
+	return { content: { type: 'text', text: '' } };
 }
 
 // 创建原理图多边形（确保坐标数组有效）
@@ -480,7 +531,7 @@ async function sch_PrimitivePolygon$create({ line, color = null, fillColor = nul
 	// 调用原生 API 创建多边形
 	const polygon = await eda.sch_PrimitivePolygon.create(line, color, fillColor, lineWidth, lineType);
 	// 返回统一的 content 包装
-	return { content: polygon };
+	return { content: { type: 'text', text: '' } };
 }
 
 // 删除原理图多边形
@@ -492,7 +543,7 @@ async function sch_PrimitivePolygon$delete({ primitiveIds }) {
 	// 调用原生 API 删除多边形
 	const result = await eda.sch_PrimitivePolygon.delete(primitiveIds);
 	// 返回统一的 content 包装
-	return { content: result };
+	return { content: { type: 'text', text: '' } };
 }
 
 // 获取全部原理图多边形
@@ -500,15 +551,15 @@ async function sch_PrimitivePolygon$getAll() {
 	// 调用原生 API 获取全部多边形
 	const result = await eda.sch_PrimitivePolygon.getAll();
 	// 返回统一的 content 包装
-	return { content: result };
+	return { content: { type: 'array', items: result } };
 }
 
 /**
  * 获取文档封装源码
  */
-async function sys_FileManager$getDocumentFootprintSources() {
-	const result = await eda.sys_FileManager.getDocumentFootprintSources();
-	return { content: result };
+async function sys_FileManager$getDocumentSource() {
+	const result = await eda.sys_FileManager.getDocumentSource();
+	return { content: { type: 'text', text: result } };
 }
 
 /**
@@ -566,25 +617,21 @@ async function calculateComponentBounds({ pins, expandMil = 10 }) {
 window.customeTools = {
 	searchTools,
 	getCanvasSize,
-	'lib_Device$search': lib_Device$search,
-
-	'sch_PrimitiveComponent$create': sch_PrimitiveComponent$create,
-	'sch_PrimitiveComponent$getAllPinsByPrimitiveId': sch_PrimitiveComponent$getAllPinsByPrimitiveId,
-	'sch_PrimitiveComponent$getAll': sch_PrimitiveComponent$getAll,
-	'sch_PrimitiveComponent$modify': sch_PrimitiveComponent$modify,
-	'sch_PrimitiveComponent$delete': sch_PrimitiveComponent$delete,
-	'calculateComponentBounds': calculateComponentBounds,
-
-	'sch_PrimitiveWire$create': sch_PrimitiveWire$create,
-	'sch_PrimitiveWire$modify': sch_PrimitiveWire$modify,
-	'sch_PrimitiveWire$delete': sch_PrimitiveWire$delete,
-	'sch_PrimitiveWire$getAll': sch_PrimitiveWire$getAll,
-
-	'sch_PrimitivePolygon$create': sch_PrimitivePolygon$create,
-	'sch_PrimitivePolygon$delete': sch_PrimitivePolygon$delete,
-	'sch_PrimitivePolygon$getAll': sch_PrimitivePolygon$getAll,
-
-	'sys_FileManager$getDocumentFootprintSources': sys_FileManager$getDocumentFootprintSources,
+	lib_Device$search,
+	sch_PrimitiveComponent$create,
+	sch_PrimitiveComponent$getAllPinsByPrimitiveId,
+	sch_PrimitiveComponent$getAll,
+	sch_PrimitiveComponent$modify,
+	sch_PrimitiveComponent$delete,
+	calculateComponentBounds,
+	sch_PrimitiveWire$create,
+	sch_PrimitiveWire$modify,
+	sch_PrimitiveWire$delete,
+	sch_PrimitiveWire$getAll,
+	sch_PrimitivePolygon$create,
+	sch_PrimitivePolygon$delete,
+	sch_PrimitivePolygon$getAll,
+	sys_FileManager$getDocumentSource,
 	toolList: [
 		{
 			name: 'searchTools',
@@ -609,7 +656,11 @@ window.customeTools = {
 		},
 		{
 			name: 'lib_Device$search',
-			description: '元件搜索；带分页参数(itemsOfPage/page)时必须提供 libraryUuid；返回 lib_Device.search 结果',
+			description: `
+元件搜索；
+带分页参数(itemsOfPage/page)时必须提供 libraryUuid;
+返回[{uuid:'123',libraryUuid:'123'},{uuid:'123',libraryUuid:'123'}]
+			`,
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -623,7 +674,10 @@ window.customeTools = {
 		},
 		{
 			name: 'sch_PrimitiveComponent$create',
-			description: '在原理图放置元件；使用前必须查看 guideline_layout_planning_prompt 了解布局规划规则，放置后必须查看 guideline_component_bounds_prompt 进行碰撞检测',
+			description: `
+在原理图放置元件；
+使用前必须查看 guideline_layout_planning_prompt 了解布局规划规则，放置后必须查看 guideline_component_bounds_prompt 进行碰撞检测
+			`,
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -717,7 +771,13 @@ window.customeTools = {
 		},
 		{
 			name: 'calculateComponentBounds',
-			description: '计算原理图元件的矩形边界；根据引脚坐标列表计算元件的最小外接矩形，支持引脚膨胀距离设置；返回矩形边界顶点坐标数组（顺时针顺序：左下、右下、右上、左上），格式：[x1,y1,x2,y2,x3,y3,x4,y4]；在放置元件后必须调用此函数计算元件边界，用于检查碰撞和避免导线穿过元件；使用前必须查看 guideline_component_bounds_prompt 了解元件边界计算与碰撞检测规则',
+			description: `
+计算原理图元件的矩形边界；
+根据引脚坐标列表计算元件的最小外接矩形，支持引脚膨胀距离设置；
+返回矩形边界顶点坐标数组（顺时针顺序：左下、右下、右上、左上），格式：[x1,y1,x2,y2,x3,y3,x4,y4]；
+在放置元件后必须调用此函数计算元件边界，用于检查碰撞和避免导线穿过元件；
+使用前必须查看 guideline_component_bounds_prompt 了解元件边界计算与碰撞检测规则
+			`,
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -742,8 +802,8 @@ window.customeTools = {
 			description: `
 创建原理图导线；line 必须为连续坐标数组（长度为偶数且不少于4）,例如:[x1,y1,x2,y2,x3,y3,x4,y4]；
 默认线宽为2;
-使用前必须查看 guideline_smart_routing_prompt 和 guideline_routing_constraints_prompt 了解智能布线和约束规则，确保最小间距和45°走线优先；
-布线完成后必须查看 guideline_drc_repair_prompt 进行DRC校验;
+使用前必须查看 guideline_routing_prompt 了解布线策略、约束、算法规则，确保最小间距和45°走线优先；
+布线完成后必须查看 guideline_routing_prompt 进行DRC校验;
 			`,
 			inputSchema: {
 				type: 'object',
@@ -878,7 +938,7 @@ const polygon = await mcpEDA.callTool({
 			},
 		},
 		{
-			name: 'sys_FileManager$getDocumentFootprintSources',
+			name: 'sys_FileManager$getDocumentSource',
 			description: '获取文档中所有封装的源码信息，返回封装UUID和对应的文档源码字符串；先查看mcp工具的提示 guideline_source_code_parse_prompt。',
 			inputSchema: {
 				type: 'object',

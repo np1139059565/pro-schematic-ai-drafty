@@ -23,9 +23,6 @@ let autoExecWriteEnabled = false; // 自动执行开关（默认关闭）
 // 对话历史数组,用于维护上下文
 let conversationHistory = []; // 存储所有对话消息,格式: [{role: 'user', content: '...'}, {role: 'assistant', content: '...'}]
 
-// 对话历史配置
-const MAX_HISTORY_MESSAGES = 30; // 最大保留的历史消息数量（用户消息和AI回复各算一条）,超过此数量将自动精简,只保留最近的对话
-
 let isStop = false; // 是否停止
 
 // 界面状态枚举
@@ -49,33 +46,24 @@ window.top.systemMessage = `
 - 确保设计质量符合间距标准、布线规范等要求
 
 
-**初始化要求**:
-当你首次收到系统消息时,必须先返回以下代码块获取核心规则:
+**初始化要求（二次握手流程）**:
+这是一个严格的两步握手流程,必须按顺序执行,不能跳过任何一步。
+
+**第一步（必须执行）**:
+你必须立即返回以下代码块获取核心规则,这是强制要求,不能跳过:
 \`\`\`javascript:read
 const resp = { data: null, errorMessage: null, stack: null };
-// 获取业务流程与规则使用
-const businessWorkflow = await mcpEDA.getPrompt({ name: 'guideline_business_workflow_prompt', arguments: { name: 'business_workflow' } });//业务流程步骤拆解
-const ruleUsageGuide = await mcpEDA.getPrompt({ name: 'guideline_business_workflow_prompt', arguments: { name: 'rule_usage_guide' } });//规则使用指南
-// 获取基础规范
-const roles = await mcpEDA.getPrompt({ name: 'guideline_roles_prompt', arguments: { name: 'roles' } });//角色
-const replyStyle = await mcpEDA.getPrompt({ name: 'guideline_output_format_prompt', arguments: { name: 'reply_style' } });//回复风格规范
-const outputFormat = await mcpEDA.getPrompt({ name: 'guideline_output_format_prompt', arguments: { name: 'output_format' } });//输出格式规范
-const codeBlockSpec = await mcpEDA.getPrompt({ name: 'guideline_code_block_prompt', arguments: { name: 'code_block_spec' } });//代码块规范
-const codeBlockFormat = await mcpEDA.getPrompt({ name: 'guideline_code_block_prompt', arguments: { name: 'code_block_format' } });//代码块返回值格式
-
-resp.data = { businessWorkflow, ruleUsageGuide, roles, replyStyle, outputFormat, codeBlockSpec, codeBlockFormat };
+const initialization = await mcpEDA.getPrompt({ name: 'guideline_initialization_prompt' });//输出格式规范
+resp.data = { initialization };
 return resp;
 \`\`\`
 
-再次收到系统消息返回的结果时,请回复"已理解系统定义,准备接收用户请求",表示你已经理解并准备好按照系统定义工作。
+⚠️ **重要**:第一步必须返回代码块,不能直接回复文字,否则初始化会失败。
 
-**规则获取策略**:
-- 根据规则列表cmcpEDA.listPrompts,在执行对应操作时再按需获取
+**第二步（仅在收到执行结果后执行）**:
+收到system角色返回的JSON格式执行结果后,你才能执行第二步:回复"已理解系统定义,准备接收用户请求"。
 
-**重要提示**:
-- mcp工具必须通过返回代码块方式调用,不能以任何其他形式调用,否则会报错
-- 所有规则都通过 getPrompt 获取,根据业务需求按需获取对应规则
-- 严格按照获取到的规则执行,确保设计质量和规范性
+⚠️ **重要**:如果还没有收到system返回的执行结果JSON,绝对不能执行第二步。必须先执行第一步的代码块,等待执行结果返回后,才能执行第二步。
 
 `;
 // 初始化函数
@@ -183,13 +171,6 @@ function updateUIState(state) {
 	}
 }
 
-/**
- * 获取当前界面状态
- * @returns {string} 当前状态
- */
-function getUIState() {
-	return currentUIState;
-}
 
 /**
  * 添加用户消息到对话历史
@@ -254,40 +235,23 @@ function parseAIResponse(response) {
 }
 
 /**
- * 判断是否为首次对话
- * 通过检查对话历史中是否存在系统消息来判断
- * @returns {boolean} 是否为首次对话
- */
-function isFirstConversation() {
-	// 检查对话历史中是否已有系统消息
-	const hasSystemMessage = conversationHistory.some((msg) => msg.role === 'system'); // 检查是否有系统消息
-	return !hasSystemMessage; // 如果没有系统消息,则是首次对话
-}
-
-/**
  * 调用AI API并处理响应
  * 包括调用API、解析响应、添加AI回复到界面和历史
  * @param loadingId - 加载指示器ID
- * @param sendSystemOnly - 是否仅发送系统消息（用于首次对话）
  * @returns AI回复内容字符串
  */
-async function callAIAndHandleResponse(loadingId, sendSystemOnly = false) {
+async function callAIAndHandleResponse(loadingId) {
 	// 如果停止状态为true,直接返回
 	if (isStop) {
 		resumeStop();
 		return; // 直接返回
 	}
 
-	// 确保系统消息在对话历史中（如果不存在则添加）
-	ensureSystemMessage(); // 确保系统消息存在
+	// 确保系统消息在对话历史中（如果不存在则添加并执行预对话）
+	await ensureSystemMessage(); // 确保系统消息存在（异步等待）
 
 	// 精简对话历史,只保留最近的消息（系统消息始终保留）
-	let trimmedHistory = trimHistoryForAPI(conversationHistory); // 精简历史用于 API 调用
-
-	// 如果仅发送系统消息，只包含系统消息
-	if (sendSystemOnly) {
-		trimmedHistory = conversationHistory.filter((msg) => msg.role === 'system'); // 只保留系统消息
-	}
+	const trimmedHistory = trimHistoryForAPI(conversationHistory); // 精简历史用于 API 调用
 
 	// 调用 AI API,传入对话历史以保持上下文
 	const response = await window.ArkAPI.callArkChat(trimmedHistory); // 调用 ARK API,传入对话历史
@@ -310,7 +274,6 @@ async function callAIAndHandleResponse(loadingId, sendSystemOnly = false) {
 		continueConversationWithResult({ data: null, errorMessage: error.message, stack: error.stack });
 	}
 
-	return aiResponse; // 返回AI回复内容
 }
 
 /**
@@ -438,36 +401,6 @@ function createWriteCodeButton(fragment, codeContainer, actionContainer) {
 
 
 /**
- * 首次对话时先发送系统消息
- * 让AI先理解系统定义，然后再发送用户消息
- */
-async function sendSystemMessageFirst() {
-	const loadingId = addLoadingIndicator(); // 添加加载指示器
-	updateStatus('AI正在理解系统定义...', 'info'); // 更新状态提示
-
-	try {
-		// 确保系统消息在对话历史中
-		ensureSystemMessage(); // 确保系统消息存在
-
-		// 仅发送系统消息
-		const aiResponse = await callAIAndHandleResponse(loadingId, true); // 仅发送系统消息
-
-		// 检查AI是否确认理解（简单检查，包含"已理解"或"准备"等关键词）
-		const hasConfirmation = /已理解|准备|ready|understand/i.test(aiResponse); // 检查确认关键词
-
-		if (!hasConfirmation) {
-			// 如果AI没有明确确认，添加提示消息
-			console.warn('AI未明确确认理解系统定义，继续发送用户消息'); // 输出警告日志
-		}
-
-		updateStatus('', ''); // 清空状态提示
-	} catch (error) {
-		handleAIError(error, loadingId, '发送系统消息失败'); // 统一错误处理
-		throw error; // 向上抛出错误
-	}
-}
-
-/**
  * 处理发送消息按钮点击事件
  */
 async function handleSendMessage() {
@@ -478,21 +411,6 @@ async function handleSendMessage() {
 		return; // 如果消息为空,直接返回
 	}
 
-	// 如果是首次对话，先发送系统消息
-	if (isFirstConversation()) {
-		try {
-			// 先发送系统消息
-			await sendSystemMessageFirst(); // 发送系统消息
-
-			// 等待一小段时间，让AI有时间处理系统消息
-			await new Promise((resolve) => setTimeout(resolve, 500)); // 延迟500毫秒
-		} catch (error) {
-			// 如果发送系统消息失败，仍然尝试发送用户消息
-			console.error('发送系统消息失败，继续发送用户消息:', error); // 输出错误日志
-		}
-	}
-
-	// 发送用户消息（正常流程）
 	await runSendFlow({
 		uiState: UI_STATE.SENDING, // 进入发送中状态
 		statusText: '正在发送...', // 状态提示
@@ -716,13 +634,18 @@ function addMessageToChat(role, content, isError = false) {
 	const fragments = parseMessageContent(content); // 解析内容
 	const codeFragments = fragments.filter((fragment) => fragment.type === 'code'); // 统计代码片段
 	let error = null;
-	if (codeFragments.length > 1) { // 多于一个代码块则视为异常
+	else if (codeFragments.length > 1) { // 多于一个代码块则视为异常
 		console.error('检测到多个代码块，已中止渲染'); // 记录错误日志
 		error = new Error('❌ 错误:每次回答只能返回单个代码块,请重新回答');
 	} else if (codeFragments.length > 0 && fragments[fragments.length - 1].type === 'text'
-		&& fragments[fragments.length - 1].content.trim().length > 20) { //代码块后面有文字描述则视为异常
+		&& fragments[fragments.length - 1].content.trim().length > 20) {
 		error = new Error('❌ 错误:每次回答只能以代码块结尾,请重新回答');
 	} else {
+		if('assistant'==role && codeFragments.length == 0){
+			// ai 没有代码块说明自动流程结束
+			updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
+			messageInput.focus(); // 聚焦输入框
+		}
 		// 遍历内容片段,创建对应的 DOM 元素
 		fragments.forEach((fragment) => {
 			if (fragment.type === 'text') {
@@ -792,33 +715,78 @@ function removeLoadingIndicator(loadingId) {
 
 
 /**
- * 确保系统消息在对话历史中
- * 如果对话历史中没有系统消息,则在开头添加
+ * 确保系统消息在对话历史中,如果没有系统消息则执行预对话流程
+ * 预对话流程包括:发送系统消息->接收命令->发送执行结果->收到指定确认消息
+ * 此流程静默执行,不在界面上显示
+ * @returns 如果预对话失败则抛出错误
  */
-function ensureSystemMessage() {
+async function ensureSystemMessage() {
 	// 检查对话历史中是否已有系统消息
 	const hasSystemMessage = conversationHistory.some((msg) => msg.role === 'system'); // 检查是否有系统消息
 
-	// 如果没有系统消息,则在开头添加
+	// 如果没有系统消息,执行预对话流程
 	if (!hasSystemMessage) {
-		conversationHistory.unshift({
+		const history = conversationHistory.slice(); // 备份对话历史,用于恢复
+		conversationHistory = [{ // 清空对话历史,只保留系统消息
 			role: 'system', // 系统消息角色
 			content: window.top.systemMessage
-		}); // 在数组开头添加系统消息
-		console.log('已添加系统消息到对话历史'); // 输出日志
+		}];
+		// 第一步:静默调用 API 发送系统消息,获取首次响应
+		const firstResponse = await window.ArkAPI.callArkChat(conversationHistory); // 调用 ARK API,传入系统消息
+		const firstAiResponse = parseAIResponse(firstResponse); // 解析响应
+
+		// 将首次响应添加到对话历史（静默,不显示在界面）
+		addAssistantMessageToHistory(firstAiResponse); // 添加到对话历史
+
+		// 第二步:解析响应,提取代码块
+		const fragments = parseMessageContent(firstAiResponse); // 解析内容
+		const codeFragments = fragments.filter((fragment) => fragment.type === 'code'); // 提取代码片段
+
+		// 
+		let error = null;
+		if (codeFragments.length > 1) { // 多于一个代码块则视为异常
+			console.error('检测到多个代码块，已中止渲染'); // 记录错误日志
+			error = new Error('❌ 错误:每次回答只能返回单个代码块');
+		} else if (codeFragments.length > 0 && fragments[fragments.length - 1].type === 'text'
+			&& fragments[fragments.length - 1].content.trim().length > 20) {
+			error = new Error('❌ 错误:每次回答只能以代码块结尾');
+		}
+
+		if (!error) {
+			// 第三步:静默执行代码（不显示在界面）
+			const code = codeFragments[0].content; // 获取第一个代码块内容
+			const executionResult = await executeCode(code); // 执行代码
+			if (executionResult.errorMessage) {
+				error = new Error(`❌ 错误:${executionResult.errorMessage}`);
+			} else {
+				// 第四步:静默发送执行结果给 AI
+				conversationHistory.push({
+					role: 'system', // 系统角色（作为执行结果的反馈）
+					content: `这是第一步返回的数据,请阅读后执行第二步:${JSON.stringify(executionResult)}`, // 结果消息内容
+				}); // 添加到对话历史
+
+				// 调用 API 获取确认响应
+				const confirmResponse = await window.ArkAPI.callArkChat(conversationHistory); // 调用 ARK API
+				const confirmAiResponse = parseAIResponse(confirmResponse); // 解析响应
+
+				// 将确认响应添加到对话历史（静默,不显示在界面）
+				addAssistantMessageToHistory(confirmAiResponse); // 添加到对话历史
+
+				// 第五步:检查响应是否包含"已理解系统定义,准备接收用户请求"
+				if (!(confirmAiResponse.includes('已理解系统定义') && confirmAiResponse.includes('准备接收用户请求'))) {
+					error = new Error('初始化失败:未收到预期的确认消息'); // 抛出错误
+				}
+			}
+
+		}
+		// 第六步:恢复对话历史
+		if (!error) {
+			conversationHistory.push(...history);
+			console.log('初始化成功,系统已准备好接收用户请求'); // 输出日志
+		} else throw error;
 	}
 }
 
-/**
- * 检查AI回复中是否包含代码块
- * @param aiResponse - AI回复内容
- * @returns 是否包含代码块
- */
-function checkHasCodeBlock(aiResponse) {
-	// 检查 AI 回复中是否包含代码块
-	const hasCodeBlock = /```(javascript|js):?(read|write)?\n/.test(aiResponse); // 检查是否有代码块
-	return hasCodeBlock; // 返回检查结果
-}
 
 /**
  * 统一的发送流程封装,减少重复代码
@@ -853,8 +821,8 @@ async function runSendFlow({
 	} catch (error) {
 		handleAIError(error, loadingId, errorPrefix); // 统一错误处理
 	} finally {
-		updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
-		messageInput.focus(); // 聚焦输入框
+		// updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
+		// messageInput.focus(); // 聚焦输入框
 	}
 }
 
