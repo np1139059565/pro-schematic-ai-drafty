@@ -27,125 +27,6 @@ window.jdbResourceList = [
 
 // 提示列表(流程、步骤、规则)
 window.jdbPromptList = [
-	{
-		name: 'guideline_initialization_prompt',
-		description: '初始化规则',
-		messages: [
-			{
-				role: 'tool_usage',
-				description: 'MCP工具集使用',
-				content: {
-					type: 'text',
-					text: `
-**MCP工具结构**:
-window.mcpEDA = {
-	callTool,      // 调用工具
-	listTools,     // 列出可用[自定义API]
-	listResources, // 列出资源
-	readResource,  // 读取资源
-	listPrompts,   // 列出提示规则
-	getPrompt,     // 获取提示规则
-};
-
-**工具调用步骤**:
-  1.使用 mcpEDA.listTools 查询可用[自定义API]列表
-  2.若没有满足要求的[自定义API],则使用searchTools 进行全量搜索[原生API]
-
-**注意**:
-- 禁止未查询 API 名称,直接调用 getComponents 等不存在的名称
-- [自定义API]是一部分经过验证稳定的API,并不是全量API
-- [原生API]数量庞大,且很多API可能无效,请谨慎使用
-`
-				}
-			},
-			{
-				role: 'search_api_standard',
-				description: '原生API搜索流程',
-				content: {
-					type: 'text',
-					text: `
- 1.明确意图并拆解出多个关键词,关键词越多,最后的搜索结果将越准确,如 ["search","component","library","搜索","元件","库",...]
- 2.返回[代码块]执行 searchTools 自定义工具
- 3.解析结果: 搜索结果将按 score 降序取前 N (默认前10)返回,越靠前说明命中的关键词越多,关联性越高
- 4.若无命中: 可以补充/替换/调整关键词重搜,直到有结果为止(最多进行3次重搜),若仍然无结果,说明该api无效,则尝试其他相似API是否可以替代
- 5.若结果等于10:说明结果太多,系统为了节省token将结果截断了,可以补充/替换/调整关键词重搜三次,取综合结果
-`
-				}
-			},
-			{
-				role: 'rule_usage_guide',
-				description: '规则使用指南',
-				content: {
-					type: 'text',
-					text: `
-**规则获取方式**:
-await mcpEDA.getPrompt({ name: 'guideline_xxx_prompt', arguments: { name: 'xxx' } });
-
-**注意**:
-- 在执行对应操作时再按需获取对应规则,若不确定规则名称可以使用mcpEDA.listPrompts列出所有提示规则
-- 每个prompt可能包含多个role,通过arguments.name指定
-- 规则间可以相互引用,如"参考 guideline_spacing_standards_prompt"
-- 若 arguments为空,则返回所有提示,比如:await mcpEDA.getPrompt({ name: 'guideline_xxx_prompt' });
-`
-				}
-			},
-			{
-				role: 'business_workflow',
-				description: '业务流程步骤拆解',
-				content: {
-					type: 'text',
-					text: `
-**工作流执行模式**:
-工作流 = 任务识别 → 工作流组合 → 规则获取 → 步骤执行 → 检查点验证 → 下一步骤
-
-**任务识别规则** (灵活匹配,支持复合任务):
-- **设计/创建原理图**: 包含"设计"、"创建"、"画"、"绘制"等 + "原理图"/"电路图"/"电路" → 组合执行: component_placement_workflow + wire_routing_workflow
-- **放置元件**: 包含"放置"、"添加"、"创建"等 + "元件"/"器件"/"芯片" → 执行: component_placement_workflow
-- **连接/布线**: 包含"连接"、"布线"、"连线"、"走线"等 → 执行: wire_routing_workflow
-- **查询信息**: 包含"查询"、"获取"、"显示"、"查看"等 → 执行: query_workflow
-
-**工作流类型** (详细步骤按需获取):
-- **component_placement_workflow**: 元件放置工作流,获取规则: guideline_component_bounds_prompt (component_bounds)
-- **wire_routing_workflow**: 导线布线工作流,获取规则: guideline_routing_prompt (routing_workflow)
-- **query_workflow**: 查询信息工作流,按需获取API
-
-**执行指令**:
-1. 识别用户意图 → 根据任务识别规则确定工作流类型(支持组合)
-2. 如果确定工作流类型,获取对应详细规则:
-   - component_placement_workflow → await mcpEDA.getPrompt({ name: 'guideline_component_bounds_prompt', arguments: { name: 'component_bounds' } })
-   - wire_routing_workflow → await mcpEDA.getPrompt({ name: 'guideline_routing_prompt', arguments: { name: 'routing_workflow' } })
-3. 按照获取的详细规则执行步骤,每个步骤后验证检查点
-4. 如果检查点失败,执行失败处理或触发错误恢复
-5. 所有检查点通过后,工作流完成
-
-**复合任务处理**:
-- 如果识别为"设计原理图"等复合任务,按顺序执行多个工作流:
-  1. 先执行 component_placement_workflow (放置所有元件)
-  2. 再执行 wire_routing_workflow (连接所有导线)
-- 每个工作流独立获取规则和执行,不能跳过任何步骤
-
-**注意**:
-- 任务识别要灵活,不能仅依赖关键词完全匹配
-- 详细工作流步骤在对应规则中,按需获取以减少token消耗
-- 不能跳过任何步骤和检查点
-`
-				}
-			},
-			{
-				role: 'error_recovery',
-				description: '错误恢复与重试策略',
-				content: {
-					type: 'text',
-					text: `
-- write 失败后先执行 read 获取最新状态
-- 识别并清理已成功放置的残留对象,防止重复放置或脏数据
-- 修正参数/逻辑后重算方案再 write,主动重试不超过 2 次
-- 仍失败时向用户说明原因并暂停
-`
-				}
-			}
-		]
-	},
 
 	{
 		name: 'guideline_spacing_standards_prompt',
@@ -157,16 +38,17 @@ await mcpEDA.getPrompt({ name: 'guideline_xxx_prompt', arguments: { name: 'xxx' 
 				content: {
 					type: 'text',
 					text: `
-**原理图设计间距**:
-- 画布-元件间距: 最小10mil,默认12mil
-- 画布-导线间距: 最小10mil,默认12mil
-- 元件-元件边界间距(不能使用中心点来计算间距)>=80mil
-- 元件-导线边界间距: 最小6mil,默认8mil
+**原理图设计间距与线宽/过孔标准**:
+- 导线线宽: 最小6mil,默认8-10mil；关键网(电源/地/时钟/高速)最小12mil,默认15-20mil
+- 边界线线宽: 默认10mil,禁止低于8mil
+- 过孔: 孔径最小8mil,默认12mil,过孔环宽>=6mil,过孔-导线/过孔-元件边界间距>=12mil
 - 导线-导线间距: 最小6mil,默认8mil
 - 导线-元件边界间距: 最小6mil,默认8mil
 - 导线-引脚间距: 最小6mil,默认8-10mil
+- 元件-元件边界间距>=80mil
+- 元件-导线边界间距: 最小6mil,默认8mil
 
-**适用范围**: 所有布局规划和布线操作必须同时满足间距
+**适用范围**: 所有布局规划和布线操作必须同时满足间距、线宽与过孔标准
 `
 				}
 			}
@@ -174,138 +56,137 @@ await mcpEDA.getPrompt({ name: 'guideline_xxx_prompt', arguments: { name: 'xxx' 
 	},
 	{
 		name: 'guideline_layout_planning_prompt',
-		description: '元件布局规划与网络标签策略',
+		description: '前期布局规划与网络标签策略',
 		messages: [
 			{
 				role: 'layout_planning',
-				description: '布局规划策略与网络标签使用规则',
+				description: '前期布局规划与网络标签策略',
 				content: {
 					type: 'text',
 					text: `
+**前期布局规划**:
 - 功能分组: 按电源/信号/控制/接口等模块集中摆放,减少跨模块长距离布线
 - 元件间距: 计算引脚/封装边界,模块边界之间预留安全距离(参考 guideline_spacing_standards_prompt)
 - 网络标签优先: 相同网络标签视为同一路径,优先用标签替代跨图直线,源头减少交叉
 - 流向布局: 按输入→处理→输出的信号流向摆放,避免反向走线
+
+**强制要求**:
+- 在代码中必须计算元件间距,确保模块边界之间预留安全距离(参考 guideline_spacing_standards_prompt)
 `
 				}
 			}
 		]
 	},
 	{
-		name: 'guideline_component_bounds_prompt',
-		description: '元件放置及边界计算',
+		name: 'guideline_smart_routing_prompt',
+		description: '智能布线绕行与推挤策略',
 		messages: [
 			{
-				role: 'component_bounds',
-				description: '元件放置工作流与边界计算步骤',
+				role: 'smart_routing',
+				description: '智能布线策略',
 				content: {
 					type: 'text',
 					text: `
-**工作流: 元件放置及边界计算**
-
-**前置条件检查**:
-- [ ] 已搜索到目标元件 → lib_Device$search
-- [ ] 已获取布局规划规则 → guideline_layout_planning_prompt (layout_planning)
-
-**执行步骤** (必须按顺序执行):
-**STEP_1: 获取画布大小**
-- API: getCanvasSize
-- 检查点: 返回画布大小
-- 失败处理:停止下面所有步骤并提示"无法获取画布大小"
-
-**STEP_2: 放置元件**
-- API: sch_PrimitiveComponent$create
-- 检查点: 返回primitiveId不为空
-- 失败处理: 重试最多2次
-
-**STEP_3: 获取引脚坐标**
-- API: sch_PrimitiveComponent$getAllPinsByPrimitiveId (invertY: true)
-- 检查点: 返回引脚数组长度>0
-
-**STEP_4: 计算边界**
-- API: calculateComponentBounds (expandMil: 10)
-- 检查点: 返回边界格式[x1,y1,x2,y2,x3,y3,x4,y4]
-
-**STEP_5: 碰撞检测** (必须执行)
-- 标准: guideline_spacing_standards_prompt (spacing_standards)
-- 检查点: 无碰撞或已记录违规项
-- 失败处理: IF 碰撞 THEN STEP_6
-
-**STEP_6: 移动元件** (仅在STEP_5有碰撞时执行)
-- API: sch_PrimitiveComponent$modify
-- 检查点: 位置已更新
-- 循环: 移动后重新执行STEP_5
-
-**STEP_7: 绘制边界多边形** (必须执行)
-- API: sch_PrimitivePolygon$create (lineType: 1=DASHED, lineWidth: 10)
-- 格式: 边界转闭合格式[x1,y1,x2,y2,x3,y3,x4,y4,x1,y1]
-- 检查点: 多边形创建成功
-
-**批量优化**: 
- - 为了减少token消耗和对话成本,多个元件必须放在同个代码块一起放置
- - 由于代码块之间不能共享数据,所以STEP_2/3/4必须在同个代码块一起执行,得到综合数据后再对多个元件逐个进行碰撞检测
- - 如果要移动元件,是需要连同边界多边形一起移动的,所以应该所有元件都放置结束后再一起绘制边界多边形
+**智能布线策略**:
+- 模式: 新导线遇障碍优先绕行,不可绕行时尝试推挤,禁止直接穿过障碍物
+- 间距要求: 遵循 guideline_spacing_standards_prompt 的间距标准,实时检测违规立即重算路径
+- 角度策略: 优先45°走线,禁止锐角(<45°)；必要的90°拐点用两段45°替代
+- 过孔策略: 关键网尽量少过孔,单根关键网过孔数建议<=2,且过孔规格满足 guideline_spacing_standards_prompt 的过孔标准
+- 路径探测: 预检查候选路径与现有导线/元件的碰撞,选无碰撞且长度/拐点数最优方案
+- 动态调整: 绘制过程中若检测到重叠/压盖,即时偏移或改道
 `
 				}
 			}
 		]
 	},
-
 	{
-		name: 'guideline_routing_prompt',
-		description: '布线策略、约束、算法与DRC校验流程',
+		name: 'guideline_routing_constraints_prompt',
+		description: '信号流向与布线优先级规则',
 		messages: [
 			{
-				role: 'routing_workflow',
-				description: '导线布线工作流与DRC校验步骤',
+				role: 'routing_constraints',
+				description: '布线约束规则',
 				content: {
 					type: 'text',
 					text: `
-**工作流: 导线布线及DRC校验**
+**布线约束**:
+- 信号流向: 按输入→处理→输出的顺序布线,减少回流与交叉
+- 角度要求: 45°优先,减少不必要的折线段；分段时尽量共线(参考 guideline_smart_routing_prompt)
+- 优先级: 关键信号(时钟/高速差分/敏感模拟)优先布,确保最短/最少拐点并留隔离区
+- 边界规则: 禁止穿越元件包络,保持安全间距(参考 guideline_spacing_standards_prompt)
+- 复用: 发现已有可用网络标签/导线路径时优先复用,避免重复新线
 
-**前置条件检查**:
-- [ ] 已获取画布大小 → getCanvasSize
-- [ ] 已获取所有元件和导线状态 → sch_PrimitiveComponent$getAll, sch_PrimitiveWire$getAll
-- [ ] 已获取所有元件的引脚坐标 → sch_PrimitiveComponent$getAllPinsByPrimitiveId (对所有元件, invertY: true)
-- [ ] 已获取间距标准规则 → guideline_spacing_standards_prompt (spacing_standards)
-
-**执行步骤** (必须按顺序执行):
-
-**STEP_1: 布局规划**
-- 识别关键信号(电源/地/时钟),按输入→处理→输出规划顺序
-- 检查点: 已确定布线顺序
-
-**STEP_2: 获取障碍物信息** (必须执行)
-- 获取所有元件列表
-- 获取各个元件的引脚坐标: 遍历所有元件,调用 sch_PrimitiveComponent$getAllPinsByPrimitiveId (invertY: true)
-- 获取各个元件的边界信息: 使用 calculateComponentBounds 计算边界
-- 获取所有现有导线的路径信息: sch_PrimitiveWire$getAll
-- 构建障碍物地图,包括:
-  - 元件边界及安全区域: 通过引脚列表计算出来的矩形边界区域,禁止导线穿越该区域
-  - 现有导线路径及安全区域: 每条导线路径向外扩展的安全距离,禁止导线穿越该区域
-- 检查点: 障碍物地图构建完成,包含元件边界、现有导线
-
-**STEP_3: 路径计算与碰撞检测** (必须执行)
-- 使用A*算法进行路径搜索,在障碍物地图上进行计算
-- 实时碰撞检测(路径计算过程中必须检查):
-  - 导线路径与元件边界的距离,必须完全避开(参考 guideline_spacing_standards_prompt)
-  - 导线路径与其他导线的距离
-  - 导线路径与画布边界的距离
-  - 识别90°拐点,替换为两段45°走线,使用sch_PrimitiveWire$modify更新
-
-- 算法参数: 距离权重 + 拐点罚分 + 碰撞罚分(碰撞时路径成本大幅增加),编码间距标准/45°偏好/障碍物
-- 检查点: 路径已计算且通过所有碰撞检测,无任何碰撞违规
-- 失败处理: IF 碰撞 THEN 调整路径或重新规划,最多重试3次
-
-**STEP_4: 导线创建**
-- API: sch_PrimitiveWire$create
-- 如果需要与旧导线连接,则删除旧导线,然后按照sch_PrimitiveWire$create函数的description中的规则创建新导线
-- 标准: 优先45°走线,禁止锐角
-- 检查点: 导线创建成功
-
-
-**策略约束**: 障碍绕行,间距实时检测,45°优先,关键信号优先,禁止穿越元件边界包络,路径复用,碰撞检测必须在路径计算时实时执行
-
+**强制要求**:
+- 关键信号(电源、地线、时钟等)必须优先布线,确保最短路径和最少拐点
+`
+				}
+			}
+		]
+	},
+	{
+		name: 'guideline_routing_algorithm_prompt',
+		description: '全局布线算法优化策略',
+		messages: [
+			{
+				role: 'routing_algorithm',
+				description: '算法优化策略',
+				content: {
+					type: 'text',
+					text: `
+**算法优化**:
+- 路径搜索: 可用 A* 评估(距离+拐点+碰撞罚分),生成候选路径集合
+- 全局优化: 用遗传/模拟退火等全局搜索对多条导线同时优化,目标最小总长/拐点/违规
+- 约束编码: 将间距标准(参考 guideline_spacing_standards_prompt)、45°偏好(参考 guideline_smart_routing_prompt)、障碍物、关键网优先级编码进代价函数
+- 拓扑识别: 识别星型/总线/树型等拓扑,针对拓扑选择分支/汇聚策略
+- 迭代校验: 每轮生成方案后即时碰撞检测；保留最优解并输出可执行的线段序列
+`
+				}
+			}
+		]
+	},
+	{
+		name: 'guideline_drc_repair_prompt',
+		description: 'DRC校验与违规修正流程',
+		messages: [
+			{
+				role: 'drc_check',
+				description: 'DRC校验检查规则',
+				content: {
+					type: 'text',
+					text: `
+**DRC校验检查规则**:
+- **强制要求**: 完成所有布线操作后,必须执行DRC校验代码块(read类型)
+- **检查项目**:
+  - 线宽: 禁止低于下限(参考 guideline_spacing_standards_prompt)
+  - 间距: 线-线/线-引脚/线-元件边界(参考 guideline_spacing_standards_prompt)
+  - 过孔: 关键网过孔数量与规格满足要求(参考 guideline_spacing_standards_prompt)
+  - 拐角: 禁止锐角(<45°),优先45°；必要90°用两段45°替代 (参考 guideline_smart_routing_prompt)
+  - 短路/未连: 检查意外短接与未连网络
+  - 孤岛/残留: 清理孤立线段、悬空过孔/边界线(参考 guideline_spacing_standards_prompt)
+- **检查方法**: 获取所有导线和元件状态,逐一计算间距、线宽、过孔、角度,记录所有违规项
+- **输出格式**: 返回违规列表,包含违规类型、位置、当前值、标准值等信息；每次write后需复检
+`
+				}
+			},
+			{
+				role: 'drc_repair',
+				description: 'DRC违规修正流程',
+				content: {
+					type: 'text',
+					text: `
+**DRC违规修正流程**:
+- **强制要求**: 若发现违规,必须立即生成write代码块修正违规线,不能仅报告违规而不修正
+- **修正步骤**:
+  - 先read获取最新导线和元件状态
+  - 对每条违规线重算路径,确保符合:
+    - 间距标准(参考 guideline_spacing_standards_prompt)
+    - 45°角度要求(参考 guideline_smart_routing_prompt)
+    - 推挤/绕行策略(参考 guideline_smart_routing_prompt)
+  - 使用移动导线的API(sch_PrimitiveWire$modify)重新修正导线
+  - 修正后必须再次执行DRC校验代码块,检查是否还有违规
+  - 若仍有违规,继续修正,直到DRC校验通过(无违规)为止
+- **优先级**: 先修关键网违规(电源、地线、时钟等),再修普通网；修完一条立即复检
+- **禁止行为**: 禁止在发现违规后仅给出建议而不执行修正,必须实际生成修正代码块并执行
 `
 				}
 			}
@@ -317,7 +198,7 @@ await mcpEDA.getPrompt({ name: 'guideline_xxx_prompt', arguments: { name: 'xxx' 
 		messages: [
 			{
 				role: 'sch_source_parse',
-				description: '源码解析步骤与字段提取方法',
+				description: '原理图源码规范解析标准流程',
 				content: {
 					type: 'text',
 					text: `
@@ -333,11 +214,38 @@ await mcpEDA.getPrompt({ name: 'guideline_xxx_prompt', arguments: { name: 'xxx' 
 				}
 			}
 		]
+	},
+	{
+		name: 'guideline_component_bounds_prompt',
+		description: '元件边界计算与碰撞检测',
+		messages: [
+			{
+				role: 'component_bounds',
+				description: '元件边界与碰撞检测',
+				content: {
+					type: 'text',
+					text: `
+**元件边界计算与碰撞检测规则**:
+- **重要流程**: 元件必须放置到原理图上才能获取元件坐标,因此流程为:先放置元件 → 获取元件信息 → 计算边界 → 绘制多边形 → 检查碰撞 → 如有问题则移动元件
+- 放置元件: 使用放置元件的API将元件放置到原理图上
+- 获取元件信息: 放置后使用获取所有元件的API获取元件列表,或通过返回的组件对象获取元件标识符
+- 获取引脚坐标: 使用获取元件引脚坐标的API获取元件的所有引脚坐标
+- 计算边界: 调用计算元件边界的API计算元件的矩形边界,建议使用 expandMil=20 作为默认膨胀距离
+- 上面"放置元件""获取元件信息""获取引脚坐标""计算边界"四步可以在同一个代码块内一次性完成并返回,无需多代码块单独执行
+- 边界格式: [x1,y1,x2,y2,x3,y3,x4,y4] (顺时针: 左下→右下→右上→左上)
+- 绘制多边形: 使用绘制多边形的API绘制元件的边界多边形,必须是闭合的短划线DASHED多边形(ESCH_PrimitiveLineType.DASHED)
+- 碰撞检测: 检查新放置的元件边界是否与已存在的元件边界/导线重叠或距离过近(具体标准参考 guideline_spacing_standards_prompt)
+- 移动元件: 若检测到碰撞,必须重新计算元件位置并移动元件到合适位置
+`
+				}
+			}
+		]
 	}
 ];
 
-// mcp工具格式的api快速查询列表
-window.jdbToolList = [
+
+// mcp工具格式的原生API快速查询列表
+window.jdbToolDescriptions = [
 	{
 		"name": "dmt_Board.copyBoard",
 		"description": "复制板子",
@@ -483,7 +391,7 @@ window.jdbToolList = [
 			"properties": {
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,此处支持 IDMT_SchematicPageItem.uuid、IDMT_PcbItem.uuid、IDMT_PanelItem.uuid 作为输入"
+					"description": "标签页 ID，此处支持 IDMT_SchematicPageItem.uuid、IDMT_PcbItem.uuid、IDMT_PanelItem.uuid 作为输入"
 				}
 			},
 			"required": [
@@ -499,11 +407,11 @@ window.jdbToolList = [
 			"properties": {
 				"splitScreenType": {
 					"type": "string",
-					"description": "分屏类型,horizontal 水平、vertical 垂直"
+					"description": "分屏类型，horizontal 水平、vertical 垂直"
 				},
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,该标签页将会被移入新的分屏中"
+					"description": "标签页 ID，该标签页将会被移入新的分屏中"
 				}
 			},
 			"required": [
@@ -539,7 +447,7 @@ window.jdbToolList = [
 				},
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,如若未传入,则为最后输入焦点的画布"
+					"description": "标签页 ID，如若未传入，则为最后输入焦点的画布"
 				}
 			},
 			"required": []
@@ -553,7 +461,7 @@ window.jdbToolList = [
 			"properties": {
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,如若未传入,则获取最后输入焦点的画布"
+					"description": "标签页 ID，如若未传入，则获取最后输入焦点的画布"
 				}
 			},
 			"required": []
@@ -638,11 +546,11 @@ window.jdbToolList = [
 			"properties": {
 				"documentUuid": {
 					"type": "string",
-					"description": "文档 UUID,此处支持 IDMT_SchematicItem.uuid、IDMT_SchematicPageItem.uuid、IDMT_PcbItem.uuid、IDMT_PanelItem.uuid 作为输入"
+					"description": "文档 UUID，此处支持 IDMT_SchematicItem.uuid、IDMT_SchematicPageItem.uuid、IDMT_PcbItem.uuid、IDMT_PanelItem.uuid 作为输入"
 				},
 				"splitScreenId": {
 					"type": "string",
-					"description": "分屏 ID,即 DMT_EditorControl.getSplitScreenTree() 方法获取到的 IDMT_EditorSplitScreenItem.id"
+					"description": "分屏 ID，即 DMT_EditorControl.getSplitScreenTree() 方法获取到的 IDMT_EditorSplitScreenItem.id"
 				}
 			},
 			"required": [
@@ -658,11 +566,11 @@ window.jdbToolList = [
 			"properties": {
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"libraryType": {
 					"type": "string",
-					"description": "库类型,支持符号和封装"
+					"description": "库类型，支持符号和封装"
 				},
 				"uuid": {
 					"type": "string",
@@ -670,7 +578,7 @@ window.jdbToolList = [
 				},
 				"splitScreenId": {
 					"type": "string",
-					"description": "分屏 ID,即 DMT_EditorControl.getSplitScreenTree() 方法获取到的 IDMT_EditorSplitScreenItem.id"
+					"description": "分屏 ID，即 DMT_EditorControl.getSplitScreenTree() 方法获取到的 IDMT_EditorSplitScreenItem.id"
 				}
 			},
 			"required": [
@@ -688,7 +596,7 @@ window.jdbToolList = [
 			"properties": {
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,如若未传入,则为最后输入焦点的画布"
+					"description": "标签页 ID，如若未传入，则为最后输入焦点的画布"
 				}
 			},
 			"required": []
@@ -711,19 +619,19 @@ window.jdbToolList = [
 			"properties": {
 				"x": {
 					"type": "number",
-					"description": "中心坐标 X,如若不传入则不改变当前 X 坐标"
+					"description": "中心坐标 X，如若不传入则不改变当前 X 坐标"
 				},
 				"y": {
 					"type": "number",
-					"description": "中心坐标 Y,如若不传入则不改变当前 Y 坐标"
+					"description": "中心坐标 Y，如若不传入则不改变当前 Y 坐标"
 				},
 				"scaleRatio": {
 					"type": "number",
-					"description": "缩放比,如若不传入则不改变当前缩放比,单位跨度为 1/100,如若传入 200,则表示缩放比为 200%"
+					"description": "缩放比，如若不传入则不改变当前缩放比，单位跨度为 1/100，如若传入 200，则表示缩放比为 200%"
 				},
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,如若未传入,则为最后输入焦点的画布"
+					"description": "标签页 ID，如若未传入，则为最后输入焦点的画布"
 				}
 			},
 			"required": []
@@ -737,7 +645,7 @@ window.jdbToolList = [
 			"properties": {
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,如若未传入,则为最后输入焦点的画布"
+					"description": "标签页 ID，如若未传入，则为最后输入焦点的画布"
 				}
 			},
 			"required": []
@@ -767,7 +675,7 @@ window.jdbToolList = [
 				},
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,如若未传入,则为最后输入焦点的画布"
+					"description": "标签页 ID，如若未传入，则为最后输入焦点的画布"
 				}
 			},
 			"required": [
@@ -786,7 +694,7 @@ window.jdbToolList = [
 			"properties": {
 				"tabId": {
 					"type": "string",
-					"description": "标签页 ID,如若未传入,则为最后输入焦点的画布"
+					"description": "标签页 ID，如若未传入，则为最后输入焦点的画布"
 				}
 			},
 			"required": []
@@ -808,7 +716,7 @@ window.jdbToolList = [
 				},
 				"parentFolderUuid": {
 					"type": "string",
-					"description": "父文件夹 UUID,如若不指定,则为根文件夹"
+					"description": "父文件夹 UUID，如若不指定，则为根文件夹"
 				},
 				"description": {
 					"type": "string",
@@ -895,7 +803,7 @@ window.jdbToolList = [
 				},
 				"description": {
 					"type": "string",
-					"description": "文件夹描述,如若为 undefined 则清空工程现有描述"
+					"description": "文件夹描述，如若为 undefined 则清空工程现有描述"
 				}
 			},
 			"required": [
@@ -946,7 +854,7 @@ window.jdbToolList = [
 				},
 				"parentFolderUuid": {
 					"type": "string",
-					"description": "父文件夹 UUID,如若不指定,则默认为根文件夹"
+					"description": "父文件夹 UUID，如若不指定，则默认为根文件夹"
 				}
 			},
 			"required": [
@@ -1063,7 +971,7 @@ window.jdbToolList = [
 				},
 				"boardName": {
 					"type": "string",
-					"description": "新 PCB 所属板子名称,如若不指定则为游离 PCB"
+					"description": "新 PCB 所属板子名称，如若不指定则为游离 PCB"
 				}
 			},
 			"required": [
@@ -1079,7 +987,7 @@ window.jdbToolList = [
 			"properties": {
 				"boardName": {
 					"type": "string",
-					"description": "所属板子名称,如若不指定则为游离 PCB"
+					"description": "所属板子名称，如若不指定则为游离 PCB"
 				}
 			},
 			"required": []
@@ -1168,15 +1076,15 @@ window.jdbToolList = [
 				},
 				"projectName": {
 					"type": "string",
-					"description": "工程名称,不可重复,仅支持字母 a-zA-Z、数字 0-9、中划线 -,如若不指定,则根据工程友好名称自动生成"
+					"description": "工程名称，不可重复，仅支持字母 a-zA-Z、数字 0-9、中划线 -，如若不指定，则根据工程友好名称自动生成"
 				},
 				"teamUuid": {
 					"type": "string",
-					"description": "团队 UUID,如若不指定,则默认为个人；在不存在个人工程的环境下必须指定团队 UUID"
+					"description": "团队 UUID，如若不指定，则默认为个人；在不存在个人工程的环境下必须指定团队 UUID"
 				},
 				"folderUuid": {
 					"type": "string",
-					"description": "文件夹 UUID,如若不指定,则为根文件夹"
+					"description": "文件夹 UUID，如若不指定，则为根文件夹"
 				},
 				"description": {
 					"type": "string",
@@ -1184,7 +1092,7 @@ window.jdbToolList = [
 				},
 				"collaborationMode": {
 					"type": "string",
-					"description": "工程协作模式,如若团队权限无需工程设置协作模式,则该参数将被忽略"
+					"description": "工程协作模式，如若团队权限无需工程设置协作模式，则该参数将被忽略"
 				}
 			},
 			"required": []
@@ -1202,7 +1110,7 @@ window.jdbToolList = [
 				},
 				"folderUuid": {
 					"type": "string",
-					"description": "文件夹 UUID,如若不指定,则默认为团队的根文件夹"
+					"description": "文件夹 UUID，如若不指定，则默认为团队的根文件夹"
 				},
 				"workspaceUuid": {
 					"type": "string",
@@ -1249,7 +1157,7 @@ window.jdbToolList = [
 				},
 				"folderUuid": {
 					"type": "string",
-					"description": "文件夹 UUID,只能为当前工程所在团队或个人下的文件夹,如若为 undefined 则移动到当前团队的根文件夹"
+					"description": "文件夹 UUID，只能为当前工程所在团队或个人下的文件夹，如若为 undefined 则移动到当前团队的根文件夹"
 				}
 			},
 			"required": [
@@ -1285,7 +1193,7 @@ window.jdbToolList = [
 				},
 				"boardName": {
 					"type": "string",
-					"description": "新原理图所属板子名称,如若不指定则为游离原理图"
+					"description": "新原理图所属板子名称，如若不指定则为游离原理图"
 				}
 			},
 			"required": [
@@ -1305,7 +1213,7 @@ window.jdbToolList = [
 				},
 				"schematicUuid": {
 					"type": "string",
-					"description": "目标原理图 UUID,如若不指定则为当前原理图"
+					"description": "目标原理图 UUID，如若不指定则为当前原理图"
 				}
 			},
 			"required": [
@@ -1321,7 +1229,7 @@ window.jdbToolList = [
 			"properties": {
 				"boardName": {
 					"type": "string",
-					"description": "所属板子名称,如若不指定则为游离原理图"
+					"description": "所属板子名称，如若不指定则为游离原理图"
 				}
 			},
 			"required": []
@@ -1502,7 +1410,7 @@ window.jdbToolList = [
 			"properties": {
 				"showTitleBlock": {
 					"type": "boolean",
-					"description": "是否显示明细表,不定义将保持当前状态"
+					"description": "是否显示明细表，不定义将保持当前状态"
 				},
 				"titleBlockData": {
 					"type": "string",
@@ -1598,7 +1506,7 @@ window.jdbToolList = [
 			"properties": {
 				"workspaceUuid": {
 					"type": "string",
-					"description": "工作区 UUID,如若不指定,则将切换到个人工作区"
+					"description": "工作区 UUID，如若不指定，则将切换到个人工作区"
 				}
 			},
 			"required": []
@@ -1699,7 +1607,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_ArcAngle",
-		"description": "获取属性状态:圆弧角度",
+		"description": "获取属性状态：圆弧角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1708,7 +1616,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_EndX",
-		"description": "获取属性状态:终止位置 X",
+		"description": "获取属性状态：终止位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1717,7 +1625,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_EndY",
-		"description": "获取属性状态:终止位置 Y",
+		"description": "获取属性状态：终止位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1726,7 +1634,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_InteractiveMode",
-		"description": "获取属性状态:交互模式",
+		"description": "获取属性状态：交互模式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1735,7 +1643,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1744,7 +1652,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1753,7 +1661,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1762,7 +1670,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1771,7 +1679,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1780,7 +1688,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1789,7 +1697,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_StartX",
-		"description": "获取属性状态:起始位置 X",
+		"description": "获取属性状态：起始位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1798,7 +1706,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.getState_StartY",
-		"description": "获取属性状态:起始位置 Y",
+		"description": "获取属性状态：起始位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -1825,7 +1733,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_ArcAngle",
-		"description": "设置属性状态:圆弧角度",
+		"description": "设置属性状态：圆弧角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1841,7 +1749,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_EndX",
-		"description": "设置属性状态:终止位置 X",
+		"description": "设置属性状态：终止位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1857,7 +1765,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_EndY",
-		"description": "设置属性状态:终止位置 Y",
+		"description": "设置属性状态：终止位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1873,7 +1781,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_InteractiveMode",
-		"description": "设置属性状态:交互模式",
+		"description": "设置属性状态：交互模式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1889,7 +1797,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1905,7 +1813,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1921,7 +1829,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_Net",
-		"description": "设置属性状态:网络名称",
+		"description": "设置属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1937,7 +1845,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1953,7 +1861,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_StartX",
-		"description": "设置属性状态:起始位置 X",
+		"description": "设置属性状态：起始位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -1969,7 +1877,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveArc.setState_StartY",
-		"description": "设置属性状态:起始位置 Y",
+		"description": "设置属性状态：起始位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2021,7 +1929,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_AddIntoBom",
-		"description": "获取属性状态:是否加入 BOM",
+		"description": "获取属性状态：是否加入 BOM",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2030,7 +1938,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Component",
-		"description": "获取属性状态:关联库器件",
+		"description": "获取属性状态：关联库器件",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2039,7 +1947,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Designator",
-		"description": "获取属性状态:位号",
+		"description": "获取属性状态：位号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2048,7 +1956,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Footprint",
-		"description": "获取属性状态:关联库封装",
+		"description": "获取属性状态：关联库封装",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2057,7 +1965,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2066,7 +1974,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Manufacturer",
-		"description": "获取属性状态:制造商",
+		"description": "获取属性状态：制造商",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2075,7 +1983,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_ManufacturerId",
-		"description": "获取属性状态:制造商编号",
+		"description": "获取属性状态：制造商编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2084,7 +1992,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Model3D",
-		"description": "获取属性状态:关联库 3D 模型",
+		"description": "获取属性状态：关联库 3D 模型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2093,7 +2001,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Name",
-		"description": "获取属性状态:名称",
+		"description": "获取属性状态：名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2102,7 +2010,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_OtherProperty",
-		"description": "获取属性状态:其它参数",
+		"description": "获取属性状态：其它参数",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2111,7 +2019,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Pads",
-		"description": "获取属性状态:焊盘",
+		"description": "获取属性状态：焊盘",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2120,7 +2028,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2129,7 +2037,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2138,7 +2046,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2147,7 +2055,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2156,7 +2064,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Supplier",
-		"description": "获取属性状态:供应商",
+		"description": "获取属性状态：供应商",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2165,7 +2073,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_SupplierId",
-		"description": "获取属性状态:供应商编号",
+		"description": "获取属性状态：供应商编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2174,7 +2082,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_UniqueId",
-		"description": "获取属性状态:唯一 ID",
+		"description": "获取属性状态：唯一 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2183,7 +2091,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_X",
-		"description": "获取属性状态:坐标 X",
+		"description": "获取属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2192,7 +2100,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.getState_Y",
-		"description": "获取属性状态:坐标 Y",
+		"description": "获取属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2219,7 +2127,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_AddIntoBom",
-		"description": "设置属性状态:是否加入 BOM",
+		"description": "设置属性状态：是否加入 BOM",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2235,7 +2143,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_Designator",
-		"description": "设置属性状态:位号",
+		"description": "设置属性状态：位号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2251,7 +2159,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2267,7 +2175,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_Manufacturer",
-		"description": "设置属性状态:制造商",
+		"description": "设置属性状态：制造商",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2283,7 +2191,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_ManufacturerId",
-		"description": "设置属性状态:制造商编号",
+		"description": "设置属性状态：制造商编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2299,7 +2207,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_Name",
-		"description": "设置属性状态:名称",
+		"description": "设置属性状态：名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2315,7 +2223,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_OtherProperty",
-		"description": "设置属性状态:其它参数",
+		"description": "设置属性状态：其它参数",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2329,7 +2237,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2345,7 +2253,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_Rotation",
-		"description": "设置属性状态:旋转角度",
+		"description": "设置属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2361,7 +2269,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_Supplier",
-		"description": "设置属性状态:供应商",
+		"description": "设置属性状态：供应商",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2377,7 +2285,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_SupplierId",
-		"description": "设置属性状态:供应商编号",
+		"description": "设置属性状态：供应商编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2393,7 +2301,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_UniqueId",
-		"description": "设置属性状态:唯一 ID",
+		"description": "设置属性状态：唯一 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2409,7 +2317,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_X",
-		"description": "设置属性状态:坐标 X",
+		"description": "设置属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2425,7 +2333,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponent.setState_Y",
-		"description": "设置属性状态:坐标 Y",
+		"description": "设置属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2459,7 +2367,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveComponentPad.done",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2492,7 +2400,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_CoordinateSet",
-		"description": "获取属性状态:坐标集",
+		"description": "获取属性状态：坐标集",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2501,7 +2409,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_DimensionType",
-		"description": "获取属性状态:尺寸标注类型",
+		"description": "获取属性状态：尺寸标注类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2510,7 +2418,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2519,7 +2427,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2528,7 +2436,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_Precision",
-		"description": "获取属性状态:精度",
+		"description": "获取属性状态：精度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2537,7 +2445,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2546,7 +2454,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2555,7 +2463,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2564,7 +2472,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_TextFollow",
-		"description": "获取属性状态:文字跟随",
+		"description": "获取属性状态：文字跟随",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2573,7 +2481,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.getState_Unit",
-		"description": "获取属性状态:单位",
+		"description": "获取属性状态：单位",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2600,7 +2508,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.setState_CoordinateSet",
-		"description": "设置属性状态:坐标集",
+		"description": "设置属性状态：坐标集",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2616,7 +2524,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.setState_DimensionType",
-		"description": "设置属性状态:尺寸标注类型",
+		"description": "设置属性状态：尺寸标注类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2632,7 +2540,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2648,7 +2556,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2664,7 +2572,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.setState_Precision",
-		"description": "设置属性状态:精度",
+		"description": "设置属性状态：精度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2680,7 +2588,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2696,7 +2604,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveDimension.setState_Unit",
-		"description": "设置属性状态:单位",
+		"description": "设置属性状态：单位",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2730,7 +2638,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.convertToPolyline",
-		"description": "转换到:折线图元",
+		"description": "转换到：折线图元",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2739,7 +2647,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.convertToPour",
-		"description": "转换到:覆铜边框图元",
+		"description": "转换到：覆铜边框图元",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2748,7 +2656,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.convertToRegion",
-		"description": "转换到:区域图元(默认是禁止区域)",
+		"description": "转换到：区域图元(默认是禁止区域)",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2766,7 +2674,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.getState_ComplexPolygon",
-		"description": "获取属性状态:复杂多边形",
+		"description": "获取属性状态：复杂多边形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2775,7 +2683,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.getState_FillMode",
-		"description": "获取属性状态:填充模式",
+		"description": "获取属性状态：填充模式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2784,7 +2692,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2793,7 +2701,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2802,7 +2710,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2811,7 +2719,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2820,7 +2728,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2829,7 +2737,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2856,7 +2764,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.setState_ComplexPolygon",
-		"description": "设置属性状态:复杂多边形",
+		"description": "设置属性状态：复杂多边形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2872,7 +2780,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.setState_FillMode",
-		"description": "设置属性状态:填充模式",
+		"description": "设置属性状态：填充模式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2888,7 +2796,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2904,7 +2812,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2920,7 +2828,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.setState_Net",
-		"description": "设置属性状态:网络名称",
+		"description": "设置属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2936,7 +2844,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveFill.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -2979,7 +2887,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_ComplexPolygon",
-		"description": "获取属性状态:图像源数据（复杂多边形）",
+		"description": "获取属性状态：图像源数据（复杂多边形）",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2988,7 +2896,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_Height",
-		"description": "获取属性状态:高",
+		"description": "获取属性状态：高",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -2997,7 +2905,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_HorizonMirror",
-		"description": "获取属性状态:是否水平镜像",
+		"description": "获取属性状态：是否水平镜像",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3006,7 +2914,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3015,7 +2923,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3024,7 +2932,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3033,7 +2941,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3042,7 +2950,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3051,7 +2959,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_Width",
-		"description": "获取属性状态:宽",
+		"description": "获取属性状态：宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3060,7 +2968,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_X",
-		"description": "获取属性状态:BBox 左上点坐标 X",
+		"description": "获取属性状态：BBox 左上点坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3069,7 +2977,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.getState_Y",
-		"description": "获取属性状态:BBox 左上点坐标 Y",
+		"description": "获取属性状态：BBox 左上点坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3096,7 +3004,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.setState_Height",
-		"description": "设置属性状态:高",
+		"description": "设置属性状态：高",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3112,7 +3020,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.setState_HorizonMirror",
-		"description": "设置属性状态:是否水平镜像",
+		"description": "设置属性状态：是否水平镜像",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3128,7 +3036,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3144,7 +3052,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3160,7 +3068,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.setState_Rotation",
-		"description": "设置属性状态:旋转角度",
+		"description": "设置属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3176,7 +3084,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.setState_Width",
-		"description": "设置属性状态:宽",
+		"description": "设置属性状态：宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3192,7 +3100,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.setState_X",
-		"description": "设置属性状态:BBox 左上点坐标 X",
+		"description": "设置属性状态：BBox 左上点坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3208,7 +3116,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveImage.setState_Y",
-		"description": "设置属性状态:BBox 左上点坐标 Y",
+		"description": "设置属性状态：BBox 左上点坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3292,7 +3200,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_EndX",
-		"description": "获取属性状态:终止位置 X",
+		"description": "获取属性状态：终止位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3301,7 +3209,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_EndY",
-		"description": "获取属性状态:终止位置 Y",
+		"description": "获取属性状态：终止位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3310,7 +3218,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3319,7 +3227,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3328,7 +3236,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3337,7 +3245,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3346,7 +3254,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3355,7 +3263,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3364,7 +3272,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_StartX",
-		"description": "获取属性状态:起始位置 X",
+		"description": "获取属性状态：起始位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3373,7 +3281,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.getState_StartY",
-		"description": "获取属性状态:起始位置 Y",
+		"description": "获取属性状态：起始位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3400,7 +3308,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.setState_EndX",
-		"description": "设置属性状态:终止位置 X",
+		"description": "设置属性状态：终止位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3416,7 +3324,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.setState_EndY",
-		"description": "设置属性状态:终止位置 Y",
+		"description": "设置属性状态：终止位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3432,7 +3340,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3448,7 +3356,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3464,7 +3372,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.setState_Net",
-		"description": "设置属性状态:网络名称",
+		"description": "设置属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3480,7 +3388,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3496,7 +3404,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.setState_StartX",
-		"description": "设置属性状态:起始位置 X",
+		"description": "设置属性状态：起始位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3512,7 +3420,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveLine.setState_StartY",
-		"description": "设置属性状态:起始位置 Y",
+		"description": "设置属性状态：起始位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3555,7 +3463,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_BinaryData",
-		"description": "获取属性状态:二进制数据",
+		"description": "获取属性状态：二进制数据",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3564,7 +3472,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_FileName",
-		"description": "获取属性状态:文件名",
+		"description": "获取属性状态：文件名",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3573,7 +3481,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_Height",
-		"description": "获取属性状态:高",
+		"description": "获取属性状态：高",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3582,7 +3490,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3591,7 +3499,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_Mirror",
-		"description": "获取属性状态:是否水平镜像",
+		"description": "获取属性状态：是否水平镜像",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3600,7 +3508,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3609,7 +3517,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3618,7 +3526,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3627,7 +3535,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3636,7 +3544,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_TopLeftX",
-		"description": "获取属性状态:左上点 X",
+		"description": "获取属性状态：左上点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3645,7 +3553,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_TopLeftY",
-		"description": "获取属性状态:左上点 Y",
+		"description": "获取属性状态：左上点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3654,7 +3562,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.getState_Width",
-		"description": "获取属性状态:宽",
+		"description": "获取属性状态：宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3681,7 +3589,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_BinaryData",
-		"description": "设置属性状态:二进制数据",
+		"description": "设置属性状态：二进制数据",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3697,7 +3605,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_FileName",
-		"description": "设置属性状态:文件名",
+		"description": "设置属性状态：文件名",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3713,7 +3621,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_Height",
-		"description": "设置属性状态:高",
+		"description": "设置属性状态：高",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3729,7 +3637,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3745,7 +3653,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_Mirror",
-		"description": "设置属性状态:是否水平镜像",
+		"description": "设置属性状态：是否水平镜像",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3761,7 +3669,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3777,7 +3685,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_Rotation",
-		"description": "设置属性状态:旋转角度",
+		"description": "设置属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3793,7 +3701,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_TopLeftX",
-		"description": "设置属性状态:左上点 X",
+		"description": "设置属性状态：左上点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3809,7 +3717,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_TopLeftY",
-		"description": "设置属性状态:左上点 Y",
+		"description": "设置属性状态：左上点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3825,7 +3733,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveObject.setState_Width",
-		"description": "设置属性状态:宽",
+		"description": "设置属性状态：宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -3859,7 +3767,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.create",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3868,7 +3776,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.done",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3877,7 +3785,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_HeatWelding",
-		"description": "获取属性状态:热焊优化参数",
+		"description": "获取属性状态：热焊优化参数",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3886,7 +3794,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_Hole",
-		"description": "获取属性状态:孔",
+		"description": "获取属性状态：孔",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3895,7 +3803,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_HoleOffsetX",
-		"description": "获取属性状态:孔偏移 X",
+		"description": "获取属性状态：孔偏移 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3904,7 +3812,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_HoleOffsetY",
-		"description": "获取属性状态:孔偏移 Y",
+		"description": "获取属性状态：孔偏移 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3913,7 +3821,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_HoleRotation",
-		"description": "获取属性状态:孔相对于焊盘的旋转角度",
+		"description": "获取属性状态：孔相对于焊盘的旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3922,7 +3830,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3931,7 +3839,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_Metallization",
-		"description": "获取属性状态:是否金属化孔壁",
+		"description": "获取属性状态：是否金属化孔壁",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3940,7 +3848,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3949,7 +3857,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_Pad",
-		"description": "获取属性状态:焊盘外形",
+		"description": "获取属性状态：焊盘外形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3958,7 +3866,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_PadNumber",
-		"description": "获取属性状态:焊盘编号",
+		"description": "获取属性状态：焊盘编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3967,7 +3875,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_PadType",
-		"description": "获取属性状态:焊盘类型",
+		"description": "获取属性状态：焊盘类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3976,7 +3884,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3985,7 +3893,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -3994,7 +3902,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4003,7 +3911,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4012,7 +3920,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_SolderMaskAndPasteMaskExpansion",
-		"description": "获取属性状态:阻焊/助焊扩展",
+		"description": "获取属性状态：阻焊/助焊扩展",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4021,7 +3929,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_SpecialPad",
-		"description": "获取属性状态:特殊焊盘外形",
+		"description": "获取属性状态：特殊焊盘外形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4030,7 +3938,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_X",
-		"description": "获取属性状态:位置 X",
+		"description": "获取属性状态：位置 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4039,7 +3947,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.getState_Y",
-		"description": "获取属性状态:位置 Y",
+		"description": "获取属性状态：位置 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4057,7 +3965,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.reset",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4066,7 +3974,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_HeatWelding",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4082,7 +3990,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_Hole",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4098,7 +4006,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_HoleOffsetX",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4114,7 +4022,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_HoleOffsetY",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4130,7 +4038,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_HoleRotation",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4146,7 +4054,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_Layer",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4162,7 +4070,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_Metallization",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4178,7 +4086,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_Net",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4192,7 +4100,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_Pad",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4208,7 +4116,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_PadNumber",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4224,7 +4132,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_PrimitiveLock",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4240,7 +4148,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_Rotation",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4256,7 +4164,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_SolderMaskAndPasteMaskExpansion",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4272,7 +4180,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_SpecialPad",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4287,7 +4195,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_X",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4303,7 +4211,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePad.setState_Y",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4337,7 +4245,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.convertToFill",
-		"description": "转换到:填充图元",
+		"description": "转换到：填充图元",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4346,7 +4254,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.convertToPour",
-		"description": "转换到:覆铜边框图元",
+		"description": "转换到：覆铜边框图元",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4355,7 +4263,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.convertToRegion",
-		"description": "转换到:区域图元",
+		"description": "转换到：区域图元",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4373,7 +4281,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4382,7 +4290,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4391,7 +4299,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4400,7 +4308,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.getState_Polygon",
-		"description": "获取属性状态:单多边形",
+		"description": "获取属性状态：单多边形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4409,7 +4317,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4418,7 +4326,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4427,7 +4335,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4454,7 +4362,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4470,7 +4378,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4486,7 +4394,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.setState_Net",
-		"description": "设置属性状态:网络名称",
+		"description": "设置属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4502,7 +4410,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.setState_Polygon",
-		"description": "设置属性状态:单多边形",
+		"description": "设置属性状态：单多边形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4518,7 +4426,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePolyline.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4552,7 +4460,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.convertToFill",
-		"description": "转换到:填充图元(默认是填充区域)",
+		"description": "转换到：填充图元(默认是填充区域)",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4561,7 +4469,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.convertToPolyline",
-		"description": "转换到:折线图元(默认是线条)",
+		"description": "转换到：折线图元(默认是线条)",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4570,7 +4478,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.convertToRegion",
-		"description": "转换到:区域图元(默认是禁止区域)",
+		"description": "转换到：区域图元(默认是禁止区域)",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4588,7 +4496,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_ComplexPolygon",
-		"description": "获取属性状态:复杂多边形",
+		"description": "获取属性状态：复杂多边形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4597,7 +4505,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4606,7 +4514,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4615,7 +4523,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4624,7 +4532,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_PourFillMethod",
-		"description": "获取属性状态:覆铜填充方法",
+		"description": "获取属性状态：覆铜填充方法",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4633,7 +4541,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_PourName",
-		"description": "获取属性状态:覆铜边框名称",
+		"description": "获取属性状态：覆铜边框名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4642,7 +4550,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_PourPriority",
-		"description": "获取属性状态:覆铜优先级",
+		"description": "获取属性状态：覆铜优先级",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4651,7 +4559,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_PreserveSilos",
-		"description": "获取属性状态:是否保留孤岛",
+		"description": "获取属性状态：是否保留孤岛",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4660,7 +4568,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4669,7 +4577,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4678,7 +4586,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4705,7 +4613,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_ComplexPolygon",
-		"description": "设置属性状态:复杂多边形",
+		"description": "设置属性状态：复杂多边形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4721,7 +4629,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4737,7 +4645,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4753,7 +4661,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_Net",
-		"description": "设置属性状态:网络名称",
+		"description": "设置属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4769,7 +4677,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_PourFillMethod",
-		"description": "设置属性状态:覆铜填充方法",
+		"description": "设置属性状态：覆铜填充方法",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4785,7 +4693,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_PourName",
-		"description": "设置属性状态:覆铜边框名称",
+		"description": "设置属性状态：覆铜边框名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4801,7 +4709,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_PourPriority",
-		"description": "设置属性状态:覆铜优先级",
+		"description": "设置属性状态：覆铜优先级",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4817,7 +4725,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_PreserveSilos",
-		"description": "设置属性状态:是否保留孤岛",
+		"description": "设置属性状态：是否保留孤岛",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4833,7 +4741,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePour.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -4867,7 +4775,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePoured.getState_PourFills",
-		"description": "获取属性状态:覆铜填充区域",
+		"description": "获取属性状态：覆铜填充区域",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4876,7 +4784,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePoured.getState_PourPrimitiveId",
-		"description": "获取属性状态:覆铜边框图元 ID",
+		"description": "获取属性状态：覆铜边框图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4885,7 +4793,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePoured.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4894,7 +4802,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitivePoured.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4903,7 +4811,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.convertToFill",
-		"description": "转换到:填充图元",
+		"description": "转换到：填充图元",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4912,7 +4820,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.convertToPolyline",
-		"description": "转换到:折线图元",
+		"description": "转换到：折线图元",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4921,7 +4829,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.convertToPour",
-		"description": "转换到:覆铜边框图元",
+		"description": "转换到：覆铜边框图元",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4939,7 +4847,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.getState_ComplexPolygon",
-		"description": "获取属性状态:复杂多边形",
+		"description": "获取属性状态：复杂多边形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4948,7 +4856,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4957,7 +4865,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4966,7 +4874,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4975,7 +4883,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4984,7 +4892,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -4993,7 +4901,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.getState_RegionName",
-		"description": "获取属性状态:区域名称",
+		"description": "获取属性状态：区域名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5002,7 +4910,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.getState_RuleType",
-		"description": "获取属性状态:区域规则类型",
+		"description": "获取属性状态：区域规则类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5029,7 +4937,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.setState_ComplexPolygon",
-		"description": "设置属性状态:复杂多边形",
+		"description": "设置属性状态：复杂多边形",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5045,7 +4953,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.setState_Layer",
-		"description": "设置属性状态:层",
+		"description": "设置属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5061,7 +4969,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5077,7 +4985,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5093,7 +5001,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.setState_RegionName",
-		"description": "设置属性状态:区域名称",
+		"description": "设置属性状态：区域名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5107,7 +5015,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveRegion.setState_RuleType",
-		"description": "设置属性状态:区域规则类型",
+		"description": "设置属性状态：区域规则类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5144,7 +5052,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_AlignMode",
-		"description": "获取属性状态:对齐模式",
+		"description": "获取属性状态：对齐模式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5153,7 +5061,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_Expansion",
-		"description": "获取属性状态:反相扩展",
+		"description": "获取属性状态：反相扩展",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5162,7 +5070,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_FontFamily",
-		"description": "获取属性状态:字体",
+		"description": "获取属性状态：字体",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5171,7 +5079,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_FontSize",
-		"description": "获取属性状态:字号",
+		"description": "获取属性状态：字号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5180,7 +5088,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_Layer",
-		"description": "获取属性状态:层",
+		"description": "获取属性状态：层",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5189,7 +5097,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5198,7 +5106,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_Mirror",
-		"description": "获取属性状态:是否镜像",
+		"description": "获取属性状态：是否镜像",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5207,7 +5115,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5216,7 +5124,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5225,7 +5133,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5234,7 +5142,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_Reverse",
-		"description": "获取属性状态:是否反相",
+		"description": "获取属性状态：是否反相",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5243,7 +5151,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5252,7 +5160,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_Text",
-		"description": "获取属性状态:文本内容",
+		"description": "获取属性状态：文本内容",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5261,7 +5169,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_X",
-		"description": "获取属性状态:坐标 X",
+		"description": "获取属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5270,7 +5178,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.getState_Y",
-		"description": "获取属性状态:坐标 Y",
+		"description": "获取属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5288,7 +5196,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_AlignMode",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5304,7 +5212,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_Expansion",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5320,7 +5228,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_FontFamily",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5336,7 +5244,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_FontSize",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5352,7 +5260,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_Layer",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5368,7 +5276,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_LineWidth",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5384,7 +5292,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_Mirror",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5400,7 +5308,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_PrimitiveLock",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5416,7 +5324,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_Reverse",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5432,7 +5340,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_Rotation",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5448,7 +5356,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_Text",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5464,7 +5372,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_X",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5480,7 +5388,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveString.setState_Y",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5532,7 +5440,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_DesignRuleBlindViaName",
-		"description": "获取属性状态:盲埋孔设计规则项名称",
+		"description": "获取属性状态：盲埋孔设计规则项名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5541,7 +5449,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_Diameter",
-		"description": "获取属性状态:外径",
+		"description": "获取属性状态：外径",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5550,7 +5458,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_HoleDiameter",
-		"description": "获取属性状态:孔径",
+		"description": "获取属性状态：孔径",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5559,7 +5467,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5568,7 +5476,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5577,7 +5485,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_PrimitiveLock",
-		"description": "获取属性状态:是否锁定",
+		"description": "获取属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5586,7 +5494,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5595,7 +5503,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_SolderMaskExpansion",
-		"description": "获取属性状态:阻焊/助焊扩展",
+		"description": "获取属性状态：阻焊/助焊扩展",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5604,7 +5512,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_ViaType",
-		"description": "获取属性状态:过孔类型",
+		"description": "获取属性状态：过孔类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5613,7 +5521,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_X",
-		"description": "获取属性状态:坐标 X",
+		"description": "获取属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5622,7 +5530,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.getState_Y",
-		"description": "获取属性状态:坐标 Y",
+		"description": "获取属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5649,7 +5557,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_DesignRuleBlindViaName",
-		"description": "设置属性状态:盲埋孔设计规则项名称",
+		"description": "设置属性状态：盲埋孔设计规则项名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5665,7 +5573,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_Diameter",
-		"description": "设置属性状态:外径",
+		"description": "设置属性状态：外径",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5681,7 +5589,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_HoleDiameter",
-		"description": "设置属性状态:孔径",
+		"description": "设置属性状态：孔径",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5697,7 +5605,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_Net",
-		"description": "设置属性状态:网络名称",
+		"description": "设置属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5713,7 +5621,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_PrimitiveLock",
-		"description": "设置属性状态:是否锁定",
+		"description": "设置属性状态：是否锁定",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5729,7 +5637,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_SolderMaskExpansion",
-		"description": "设置属性状态:阻焊/助焊扩展",
+		"description": "设置属性状态：阻焊/助焊扩展",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5745,7 +5653,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_ViaType",
-		"description": "设置属性状态:过孔类型",
+		"description": "设置属性状态：过孔类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5761,7 +5669,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_X",
-		"description": "设置属性状态:坐标 X",
+		"description": "设置属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5777,7 +5685,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "ipcb_PrimitiveVia.setState_Y",
-		"description": "设置属性状态:坐标 Y",
+		"description": "设置属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5820,7 +5728,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_Color",
-		"description": "获取属性状态:颜色",
+		"description": "获取属性状态：颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5829,7 +5737,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_EndX",
-		"description": "获取属性状态:终止点 X",
+		"description": "获取属性状态：终止点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5838,7 +5746,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_EndY",
-		"description": "获取属性状态:终止点 Y",
+		"description": "获取属性状态：终止点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5847,7 +5755,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_FillColor",
-		"description": "获取属性状态:填充颜色",
+		"description": "获取属性状态：填充颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5856,7 +5764,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_LineType",
-		"description": "获取属性状态:线型",
+		"description": "获取属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5865,7 +5773,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5874,7 +5782,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5883,7 +5791,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5892,7 +5800,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_ReferenceX",
-		"description": "获取属性状态:参考点 X",
+		"description": "获取属性状态：参考点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5901,7 +5809,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_ReferenceY",
-		"description": "获取属性状态:参考点 Y",
+		"description": "获取属性状态：参考点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5910,7 +5818,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_StartX",
-		"description": "获取属性状态:起始点 X",
+		"description": "获取属性状态：起始点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5919,7 +5827,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.getState_StartY",
-		"description": "获取属性状态:起始点 Y",
+		"description": "获取属性状态：起始点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -5946,7 +5854,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_Color",
-		"description": "设置属性状态:颜色",
+		"description": "设置属性状态：颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5962,7 +5870,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_EndX",
-		"description": "设置属性状态:终止点 X",
+		"description": "设置属性状态：终止点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5978,7 +5886,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_EndY",
-		"description": "设置属性状态:终止点 Y",
+		"description": "设置属性状态：终止点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -5994,7 +5902,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_FillColor",
-		"description": "设置属性状态:填充颜色",
+		"description": "设置属性状态：填充颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6010,7 +5918,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_LineType",
-		"description": "设置属性状态:线型",
+		"description": "设置属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6026,7 +5934,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6042,7 +5950,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_ReferenceX",
-		"description": "设置属性状态:参考点 X",
+		"description": "设置属性状态：参考点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6058,7 +5966,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_ReferenceY",
-		"description": "设置属性状态:参考点 Y",
+		"description": "设置属性状态：参考点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6074,7 +5982,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_StartX",
-		"description": "设置属性状态:起始点 X",
+		"description": "设置属性状态：起始点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6090,7 +5998,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveArc.setState_StartY",
-		"description": "设置属性状态:起始点 Y",
+		"description": "设置属性状态：起始点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6133,7 +6041,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.getState_BusName",
-		"description": "获取属性状态:总线名称",
+		"description": "获取属性状态：总线名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6142,7 +6050,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.getState_Color",
-		"description": "获取属性状态:总线颜色",
+		"description": "获取属性状态：总线颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6151,7 +6059,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.getState_Line",
-		"description": "获取属性状态:多段线坐标组",
+		"description": "获取属性状态：多段线坐标组",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6160,7 +6068,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.getState_LineType",
-		"description": "获取属性状态:线型",
+		"description": "获取属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6169,7 +6077,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6178,7 +6086,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6187,7 +6095,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6205,7 +6113,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.setState_BusName",
-		"description": "设置属性状态:总线名称",
+		"description": "设置属性状态：总线名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6221,7 +6129,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.setState_Color",
-		"description": "设置属性状态:总线颜色",
+		"description": "设置属性状态：总线颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6237,7 +6145,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.setState_Line",
-		"description": "设置属性状态:多段线坐标组",
+		"description": "设置属性状态：多段线坐标组",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6253,7 +6161,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.setState_LineType",
-		"description": "设置属性状态:线型",
+		"description": "设置属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6269,7 +6177,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveBus.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6303,7 +6211,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCbbSymbolComponent.getState_Cbb",
-		"description": "获取属性状态:关联复用模块",
+		"description": "获取属性状态：关联复用模块",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6312,7 +6220,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCbbSymbolComponent.getState_CbbSymbol",
-		"description": "获取属性状态:关联复用模块符号",
+		"description": "获取属性状态：关联复用模块符号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6330,7 +6238,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_CenterX",
-		"description": "获取属性状态:圆心 X",
+		"description": "获取属性状态：圆心 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6339,7 +6247,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_CenterY",
-		"description": "获取属性状态:圆心 Y",
+		"description": "获取属性状态：圆心 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6348,7 +6256,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_Color",
-		"description": "获取属性状态:颜色",
+		"description": "获取属性状态：颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6357,7 +6265,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_FillColor",
-		"description": "获取属性状态:填充颜色",
+		"description": "获取属性状态：填充颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6366,7 +6274,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_FillStyle",
-		"description": "获取属性状态:填充样式",
+		"description": "获取属性状态：填充样式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6375,7 +6283,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_LineType",
-		"description": "获取属性状态:线型",
+		"description": "获取属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6384,7 +6292,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6393,7 +6301,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6402,7 +6310,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6411,7 +6319,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.getState_Radius",
-		"description": "获取属性状态:半径",
+		"description": "获取属性状态：半径",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6438,7 +6346,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.setState_CenterX",
-		"description": "设置属性状态:圆心 X",
+		"description": "设置属性状态：圆心 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6454,7 +6362,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.setState_CenterY",
-		"description": "设置属性状态:圆心 Y",
+		"description": "设置属性状态：圆心 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6470,7 +6378,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.setState_Color",
-		"description": "设置属性状态:颜色",
+		"description": "设置属性状态：颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6486,7 +6394,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.setState_FillColor",
-		"description": "设置属性状态:填充颜色",
+		"description": "设置属性状态：填充颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6502,7 +6410,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.setState_FillStyle",
-		"description": "设置属性状态:填充样式",
+		"description": "设置属性状态：填充样式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6518,7 +6426,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.setState_LineType",
-		"description": "设置属性状态:线型",
+		"description": "设置属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6534,7 +6442,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6550,7 +6458,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveCircle.setState_Radius",
-		"description": "设置属性状态:半径",
+		"description": "设置属性状态：半径",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6593,7 +6501,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_AddIntoBom",
-		"description": "获取属性状态:是否加入 BOM",
+		"description": "获取属性状态：是否加入 BOM",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6602,7 +6510,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_AddIntoPcb",
-		"description": "获取属性状态:是否转到 PCB",
+		"description": "获取属性状态：是否转到 PCB",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6611,7 +6519,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Component",
-		"description": "获取属性状态:关联库器件",
+		"description": "获取属性状态：关联库器件",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6620,7 +6528,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_ComponentType",
-		"description": "获取属性状态:器件类型",
+		"description": "获取属性状态：器件类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6629,7 +6537,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Designator",
-		"description": "获取属性状态:位号",
+		"description": "获取属性状态：位号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6638,7 +6546,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Footprint",
-		"description": "获取属性状态:关联库封装",
+		"description": "获取属性状态：关联库封装",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6647,7 +6555,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Manufacturer",
-		"description": "获取属性状态:制造商",
+		"description": "获取属性状态：制造商",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6656,7 +6564,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_ManufacturerId",
-		"description": "获取属性状态:制造商编号",
+		"description": "获取属性状态：制造商编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6665,7 +6573,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Mirror",
-		"description": "获取属性状态:是否镜像",
+		"description": "获取属性状态：是否镜像",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6674,7 +6582,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Name",
-		"description": "获取属性状态:名称",
+		"description": "获取属性状态：名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6683,7 +6591,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6692,7 +6600,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_OtherProperty",
-		"description": "获取属性状态:其它参数",
+		"description": "获取属性状态：其它参数",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6701,7 +6609,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6710,7 +6618,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6719,7 +6627,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6728,7 +6636,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_SubPartName",
-		"description": "获取属性状态:子图块名称",
+		"description": "获取属性状态：子图块名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6737,7 +6645,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Supplier",
-		"description": "获取属性状态:供应商",
+		"description": "获取属性状态：供应商",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6746,7 +6654,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_SupplierId",
-		"description": "获取属性状态:供应商编号",
+		"description": "获取属性状态：供应商编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6755,7 +6663,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Symbol",
-		"description": "获取属性状态:关联库符号",
+		"description": "获取属性状态：关联库符号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6764,7 +6672,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_UniqueId",
-		"description": "获取属性状态:唯一 ID",
+		"description": "获取属性状态：唯一 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6773,7 +6681,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_X",
-		"description": "获取属性状态:坐标 X",
+		"description": "获取属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6782,7 +6690,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.getState_Y",
-		"description": "获取属性状态:坐标 Y",
+		"description": "获取属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -6809,7 +6717,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_AddIntoBom",
-		"description": "设置属性状态:是否加入 BOM",
+		"description": "设置属性状态：是否加入 BOM",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6825,7 +6733,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_AddIntoPcb",
-		"description": "设置属性状态:是否转到 PCB",
+		"description": "设置属性状态：是否转到 PCB",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6841,7 +6749,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_Designator",
-		"description": "设置属性状态:位号",
+		"description": "设置属性状态：位号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6857,7 +6765,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_Manufacturer",
-		"description": "设置属性状态:制造商",
+		"description": "设置属性状态：制造商",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6873,7 +6781,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_ManufacturerId",
-		"description": "设置属性状态:制造商编号",
+		"description": "设置属性状态：制造商编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6889,7 +6797,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_Mirror",
-		"description": "设置属性状态:是否镜像",
+		"description": "设置属性状态：是否镜像",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6905,7 +6813,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_Name",
-		"description": "设置属性状态:名称",
+		"description": "设置属性状态：名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6921,7 +6829,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_Net",
-		"description": "设置属性状态:网络名称",
+		"description": "设置属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6937,7 +6845,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_OtherProperty",
-		"description": "设置属性状态:其它参数",
+		"description": "设置属性状态：其它参数",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6951,7 +6859,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_Rotation",
-		"description": "设置属性状态:旋转角度",
+		"description": "设置属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6967,7 +6875,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_Supplier",
-		"description": "设置属性状态:供应商",
+		"description": "设置属性状态：供应商",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6983,7 +6891,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_SupplierId",
-		"description": "设置属性状态:供应商编号",
+		"description": "设置属性状态：供应商编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -6999,7 +6907,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_UniqueId",
-		"description": "设置属性状态:唯一 ID",
+		"description": "设置属性状态：唯一 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7015,7 +6923,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_X",
-		"description": "设置属性状态:坐标 X",
+		"description": "设置属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7031,7 +6939,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveComponent.setState_Y",
-		"description": "设置属性状态:坐标 Y",
+		"description": "设置属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7065,7 +6973,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.done",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7074,7 +6982,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_OtherProperty",
-		"description": "获取属性状态:其它参数",
+		"description": "获取属性状态：其它参数",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7083,7 +6991,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_PinColor",
-		"description": "获取属性状态:引脚颜色",
+		"description": "获取属性状态：引脚颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7092,7 +7000,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_PinLength",
-		"description": "获取属性状态:引脚长度",
+		"description": "获取属性状态：引脚长度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7101,7 +7009,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_PinName",
-		"description": "获取属性状态:引脚名称",
+		"description": "获取属性状态：引脚名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7110,7 +7018,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_PinNumber",
-		"description": "获取属性状态:引脚编号",
+		"description": "获取属性状态：引脚编号",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7119,7 +7027,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_PinShape",
-		"description": "获取属性状态:引脚形状",
+		"description": "获取属性状态：引脚形状",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7128,7 +7036,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_pinType",
-		"description": "获取属性状态:引脚类型",
+		"description": "获取属性状态：引脚类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7137,7 +7045,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7146,7 +7054,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7155,7 +7063,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7164,7 +7072,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_X",
-		"description": "获取属性状态:坐标 X",
+		"description": "获取属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7173,7 +7081,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.getState_Y",
-		"description": "获取属性状态:坐标 Y",
+		"description": "获取属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7191,7 +7099,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.reset",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7200,7 +7108,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_OtherProperty",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7214,7 +7122,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_PinColor",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7230,7 +7138,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_PinLength",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7246,7 +7154,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_PinName",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7262,7 +7170,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_PinNumber",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7278,7 +7186,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_PinShape",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7294,7 +7202,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_PinType",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7310,7 +7218,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_Rotation",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7326,7 +7234,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_X",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7342,7 +7250,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePin.setState_Y",
-		"description": "此 API 当前处于 BETA 预览状态,希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改,请不要将它用于任何正式环境。",
+		"description": "此 API 当前处于 BETA 预览状态，希望得到开发者的反馈。它的任何功能都可能在接下来的开发进程中被修改，请不要将它用于任何正式环境。",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7385,7 +7293,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.getState_Color",
-		"description": "获取属性状态:颜色",
+		"description": "获取属性状态：颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7394,7 +7302,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.getState_FillColor",
-		"description": "获取属性状态:填充颜色",
+		"description": "获取属性状态：填充颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7403,7 +7311,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.getState_Line",
-		"description": "获取属性状态:坐标组",
+		"description": "获取属性状态：坐标组",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7412,7 +7320,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.getState_LineType",
-		"description": "获取属性状态:线型",
+		"description": "获取属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7421,7 +7329,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7430,7 +7338,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7439,7 +7347,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7466,7 +7374,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.setState_Color",
-		"description": "设置属性状态:颜色",
+		"description": "设置属性状态：颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7482,7 +7390,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.setState_FillColor",
-		"description": "设置属性状态:填充颜色",
+		"description": "设置属性状态：填充颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7498,7 +7406,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.setState_Line",
-		"description": "设置属性状态:坐标组",
+		"description": "设置属性状态：坐标组",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7517,7 +7425,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.setState_LineType",
-		"description": "设置属性状态:线型",
+		"description": "设置属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7533,7 +7441,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitivePolygon.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7576,7 +7484,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_Color",
-		"description": "获取属性状态:边框颜色",
+		"description": "获取属性状态：边框颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7585,7 +7493,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_CornerRadius",
-		"description": "获取属性状态:圆角半径",
+		"description": "获取属性状态：圆角半径",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7594,7 +7502,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_FillColor",
-		"description": "获取属性状态:填充颜色",
+		"description": "获取属性状态：填充颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7603,7 +7511,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_FillStyle",
-		"description": "获取属性状态:填充样式",
+		"description": "获取属性状态：填充样式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7612,7 +7520,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_Height",
-		"description": "获取属性状态:高",
+		"description": "获取属性状态：高",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7621,7 +7529,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_LineType",
-		"description": "获取属性状态:线型",
+		"description": "获取属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7630,7 +7538,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7639,7 +7547,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7648,7 +7556,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7657,7 +7565,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7666,7 +7574,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_TopLeftX",
-		"description": "获取属性状态:左上点 X",
+		"description": "获取属性状态：左上点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7675,7 +7583,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_TopLeftY",
-		"description": "获取属性状态:左上点 Y",
+		"description": "获取属性状态：左上点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7684,7 +7592,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.getState_Width",
-		"description": "获取属性状态:宽",
+		"description": "获取属性状态：宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7711,7 +7619,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_Color",
-		"description": "设置属性状态:边框颜色",
+		"description": "设置属性状态：边框颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7727,7 +7635,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_CornerRadius",
-		"description": "设置属性状态:圆角半径",
+		"description": "设置属性状态：圆角半径",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7743,7 +7651,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_FillColor",
-		"description": "设置属性状态:填充颜色",
+		"description": "设置属性状态：填充颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7759,7 +7667,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_FillStyle",
-		"description": "设置属性状态:填充样式",
+		"description": "设置属性状态：填充样式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7775,7 +7683,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_Height",
-		"description": "设置属性状态:高",
+		"description": "设置属性状态：高",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7791,7 +7699,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_LineType",
-		"description": "设置属性状态:线型",
+		"description": "设置属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7807,7 +7715,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7823,7 +7731,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_Rotation",
-		"description": "设置属性状态:旋转角度",
+		"description": "设置属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7839,7 +7747,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_TopLeftX",
-		"description": "设置属性状态:左上点 X",
+		"description": "设置属性状态：左上点 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7855,7 +7763,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_TopLeftY",
-		"description": "设置属性状态:左上点 Y",
+		"description": "设置属性状态：左上点 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7871,7 +7779,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveRectangle.setState_Width",
-		"description": "设置属性状态:宽",
+		"description": "设置属性状态：宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -7914,7 +7822,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_AlignMode",
-		"description": "获取属性状态:对齐模式",
+		"description": "获取属性状态：对齐模式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7923,7 +7831,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_Bold",
-		"description": "获取属性状态:是否加粗",
+		"description": "获取属性状态：是否加粗",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7932,7 +7840,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_Content",
-		"description": "获取属性状态:文本内容",
+		"description": "获取属性状态：文本内容",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7941,7 +7849,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_FontName",
-		"description": "获取属性状态:字体名称",
+		"description": "获取属性状态：字体名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7950,7 +7858,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_FontSize",
-		"description": "获取属性状态:字体大小",
+		"description": "获取属性状态：字体大小",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7959,7 +7867,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_Italic",
-		"description": "获取属性状态:是否斜体",
+		"description": "获取属性状态：是否斜体",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7968,7 +7876,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7977,7 +7885,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7986,7 +7894,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_Rotation",
-		"description": "获取属性状态:旋转角度",
+		"description": "获取属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -7995,7 +7903,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_TextColor",
-		"description": "获取属性状态:文本颜色",
+		"description": "获取属性状态：文本颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8004,7 +7912,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_UnderLine",
-		"description": "获取属性状态:是否加下划线",
+		"description": "获取属性状态：是否加下划线",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8013,7 +7921,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_X",
-		"description": "获取属性状态:坐标 X",
+		"description": "获取属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8022,7 +7930,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.getState_Y",
-		"description": "获取属性状态:坐标 Y",
+		"description": "获取属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8049,7 +7957,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_AlignMode",
-		"description": "设置属性状态:对齐模式",
+		"description": "设置属性状态：对齐模式",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8065,7 +7973,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_Bold",
-		"description": "设置属性状态:是否加粗",
+		"description": "设置属性状态：是否加粗",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8081,7 +7989,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_Content",
-		"description": "设置属性状态:文本内容",
+		"description": "设置属性状态：文本内容",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8097,7 +8005,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_FontName",
-		"description": "设置属性状态:字体名称",
+		"description": "设置属性状态：字体名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8113,7 +8021,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_FontSize",
-		"description": "设置属性状态:字体大小",
+		"description": "设置属性状态：字体大小",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8129,7 +8037,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_Italic",
-		"description": "设置属性状态:是否斜体",
+		"description": "设置属性状态：是否斜体",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8145,7 +8053,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_Rotation",
-		"description": "设置属性状态:旋转角度",
+		"description": "设置属性状态：旋转角度",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8161,7 +8069,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_TextColor",
-		"description": "设置属性状态:文本颜色",
+		"description": "设置属性状态：文本颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8177,7 +8085,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_UnderLine",
-		"description": "设置属性状态:是否加下划线",
+		"description": "设置属性状态：是否加下划线",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8193,7 +8101,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_X",
-		"description": "设置属性状态:坐标 X",
+		"description": "设置属性状态：坐标 X",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8209,7 +8117,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveText.setState_Y",
-		"description": "设置属性状态:坐标 Y",
+		"description": "设置属性状态：坐标 Y",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8252,7 +8160,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.getState_Color",
-		"description": "获取属性状态:总线颜色",
+		"description": "获取属性状态：总线颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8261,7 +8169,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.getState_Line",
-		"description": "获取属性状态:多段线坐标组",
+		"description": "获取属性状态：多段线坐标组",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8270,7 +8178,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.getState_LineType",
-		"description": "获取属性状态:线型",
+		"description": "获取属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8279,7 +8187,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.getState_LineWidth",
-		"description": "获取属性状态:线宽",
+		"description": "获取属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8288,7 +8196,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.getState_Net",
-		"description": "获取属性状态:网络名称",
+		"description": "获取属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8297,7 +8205,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.getState_PrimitiveId",
-		"description": "获取属性状态:图元 ID",
+		"description": "获取属性状态：图元 ID",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8306,7 +8214,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.getState_PrimitiveType",
-		"description": "获取属性状态:图元类型",
+		"description": "获取属性状态：图元类型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {},
@@ -8324,7 +8232,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.setState_Color",
-		"description": "设置属性状态:导线颜色",
+		"description": "设置属性状态：导线颜色",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8340,7 +8248,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.setState_Line",
-		"description": "设置属性状态:多段线坐标组",
+		"description": "设置属性状态：多段线坐标组",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8356,7 +8264,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.setState_LineType",
-		"description": "设置属性状态:线型",
+		"description": "设置属性状态：线型",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8372,7 +8280,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.setState_LineWidth",
-		"description": "设置属性状态:线宽",
+		"description": "设置属性状态：线宽",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8388,7 +8296,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "isch_PrimitiveWire.setState_Net",
-		"description": "设置属性状态:网络名称",
+		"description": "设置属性状态：网络名称",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -8432,7 +8340,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"targetLibraryUuid": {
 					"type": "string",
@@ -8444,7 +8352,7 @@ window.jdbToolList = [
 				},
 				"newModelName": {
 					"type": "string",
-					"description": "新 3D 模型名称,如若目标库内存在重名 3D 模型将导致复制失败"
+					"description": "新 3D 模型名称，如若目标库内存在重名 3D 模型将导致复制失败"
 				}
 			},
 			"required": [
@@ -8462,7 +8370,7 @@ window.jdbToolList = [
 			"properties": {
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"modelFile": {
 					"type": "string",
@@ -8491,7 +8399,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -8512,7 +8420,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -8532,7 +8440,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"modelName": {
 					"type": "string",
@@ -8565,11 +8473,11 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"classification": {
 					"type": "string",
-					"description": "分类,默认为全部"
+					"description": "分类，默认为全部"
 				},
 				"itemsOfPage": {
 					"type": "number",
@@ -8597,7 +8505,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"targetLibraryUuid": {
 					"type": "string",
@@ -8609,7 +8517,7 @@ window.jdbToolList = [
 				},
 				"newCbbName": {
 					"type": "string",
-					"description": "新复用模块名称,如若目标库内存在重名复用模块将导致复制失败"
+					"description": "新复用模块名称，如若目标库内存在重名复用模块将导致复制失败"
 				}
 			},
 			"required": [
@@ -8627,7 +8535,7 @@ window.jdbToolList = [
 			"properties": {
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"cbbName": {
 					"type": "string",
@@ -8660,7 +8568,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -8681,7 +8589,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -8701,7 +8609,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"cbbName": {
 					"type": "string",
@@ -8734,7 +8642,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -8755,11 +8663,11 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"splitScreenId": {
 					"type": "string",
-					"description": "分屏 ID,不填写则默认在最后输入焦点的分屏内打开,可以使用 DMT_EditorControl 内的接口获取"
+					"description": "分屏 ID，不填写则默认在最后输入焦点的分屏内打开，可以使用 DMT_EditorControl 内的接口获取"
 				}
 			},
 			"required": [
@@ -8780,11 +8688,11 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"classification": {
 					"type": "string",
-					"description": "分类,默认为全部"
+					"description": "分类，默认为全部"
 				},
 				"itemsOfPage": {
 					"type": "number",
@@ -8980,7 +8888,7 @@ window.jdbToolList = [
 				},
 				"secondaryClassificationUuid": {
 					"type": "string",
-					"description": "二级分类 UUID,如若不指定,则只获取一级分类的信息"
+					"description": "二级分类 UUID，如若不指定，则只获取一级分类的信息"
 				}
 			},
 			"required": [
@@ -9002,7 +8910,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"targetLibraryUuid": {
 					"type": "string",
@@ -9014,7 +8922,7 @@ window.jdbToolList = [
 				},
 				"newDeviceName": {
 					"type": "string",
-					"description": "新器件名称,如若目标库内存在重名器件将导致复制失败"
+					"description": "新器件名称，如若目标库内存在重名器件将导致复制失败"
 				}
 			},
 			"required": [
@@ -9032,7 +8940,7 @@ window.jdbToolList = [
 			"properties": {
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"deviceName": {
 					"type": "string",
@@ -9044,7 +8952,7 @@ window.jdbToolList = [
 				},
 				"association": {
 					"type": "string",
-					"description": "关联符号、封装、图像,指定 symbolType 则创建新符号,无需新建符号则无需指定 symbolType,但请注意,如若不新建符号也不指定符号的关联信息将无法创建器件"
+					"description": "关联符号、封装、图像，指定 symbolType 则创建新符号，无需新建符号则无需指定 symbolType，但请注意，如若不新建符号也不指定符号的关联信息将无法创建器件"
 				},
 				"description": {
 					"type": "string",
@@ -9052,7 +8960,7 @@ window.jdbToolList = [
 				},
 				"property": {
 					"type": "string",
-					"description": "其它参数,仅 designator、addIntoBom、addIntoPcb 存在默认值"
+					"description": "其它参数，仅 designator、addIntoBom、addIntoPcb 存在默认值"
 				}
 			},
 			"required": []
@@ -9070,7 +8978,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -9091,7 +8999,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -9114,7 +9022,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"allowMultiMatch": {
 					"type": "boolean",
@@ -9138,7 +9046,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"allowMultiMatch": {
 					"type": "string",
@@ -9162,7 +9070,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"deviceName": {
 					"type": "string",
@@ -9200,15 +9108,15 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"classification": {
 					"type": "string",
-					"description": "分类,默认为全部"
+					"description": "分类，默认为全部"
 				},
 				"symbolType": {
 					"type": "string",
-					"description": "符号类型,默认为全部"
+					"description": "符号类型，默认为全部"
 				},
 				"itemsOfPage": {
 					"type": "number",
@@ -9236,7 +9144,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"targetLibraryUuid": {
 					"type": "string",
@@ -9248,7 +9156,7 @@ window.jdbToolList = [
 				},
 				"newFootprintName": {
 					"type": "string",
-					"description": "新封装名称,如若目标库内存在重名封装将导致复制失败"
+					"description": "新封装名称，如若目标库内存在重名封装将导致复制失败"
 				}
 			},
 			"required": [
@@ -9266,7 +9174,7 @@ window.jdbToolList = [
 			"properties": {
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"footprintName": {
 					"type": "string",
@@ -9299,7 +9207,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -9320,7 +9228,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -9340,7 +9248,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"footprintName": {
 					"type": "string",
@@ -9373,11 +9281,11 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"splitScreenId": {
 					"type": "string",
-					"description": "分屏 ID,不填写则默认在最后输入焦点的分屏内打开,可以使用 DMT_EditorControl 内的接口获取"
+					"description": "分屏 ID，不填写则默认在最后输入焦点的分屏内打开，可以使用 DMT_EditorControl 内的接口获取"
 				}
 			},
 			"required": [
@@ -9398,11 +9306,11 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"classification": {
 					"type": "string",
-					"description": "分类,默认为全部"
+					"description": "分类，默认为全部"
 				},
 				"itemsOfPage": {
 					"type": "number",
@@ -9430,7 +9338,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"documentSource": {
 					"type": "string",
@@ -9501,7 +9409,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"targetLibraryUuid": {
 					"type": "string",
@@ -9513,7 +9421,7 @@ window.jdbToolList = [
 				},
 				"newPanelLibraryName": {
 					"type": "string",
-					"description": "新面板库名称,如若目标库内存在重名面板库将导致复制失败"
+					"description": "新面板库名称，如若目标库内存在重名面板库将导致复制失败"
 				}
 			},
 			"required": [
@@ -9531,7 +9439,7 @@ window.jdbToolList = [
 			"properties": {
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"panelLibraryName": {
 					"type": "string",
@@ -9564,7 +9472,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -9585,7 +9493,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -9605,7 +9513,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"panelLibraryName": {
 					"type": "string",
@@ -9638,11 +9546,11 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"splitScreenId": {
 					"type": "string",
-					"description": "分屏 ID,不填写则默认在最后输入焦点的分屏内打开,可以使用 DMT_EditorControl 内的接口获取"
+					"description": "分屏 ID，不填写则默认在最后输入焦点的分屏内打开，可以使用 DMT_EditorControl 内的接口获取"
 				}
 			},
 			"required": [
@@ -9663,11 +9571,11 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"classification": {
 					"type": "string",
-					"description": "分类,默认为全部"
+					"description": "分类，默认为全部"
 				},
 				"itemsOfPage": {
 					"type": "number",
@@ -9695,7 +9603,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"targetLibraryUuid": {
 					"type": "string",
@@ -9707,7 +9615,7 @@ window.jdbToolList = [
 				},
 				"newSymbolName": {
 					"type": "string",
-					"description": "新符号名称,如若目标库内存在重名符号将导致复制失败"
+					"description": "新符号名称，如若目标库内存在重名符号将导致复制失败"
 				}
 			},
 			"required": [
@@ -9725,7 +9633,7 @@ window.jdbToolList = [
 			"properties": {
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"symbolName": {
 					"type": "string",
@@ -9762,7 +9670,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -9783,7 +9691,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -9803,7 +9711,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"symbolName": {
 					"type": "string",
@@ -9836,11 +9744,11 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"splitScreenId": {
 					"type": "string",
-					"description": "分屏 ID,不填写则默认在最后输入焦点的分屏内打开,可以使用 DMT_EditorControl 内的接口获取"
+					"description": "分屏 ID，不填写则默认在最后输入焦点的分屏内打开，可以使用 DMT_EditorControl 内的接口获取"
 				}
 			},
 			"required": [
@@ -9861,15 +9769,15 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,默认为系统库,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，默认为系统库，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"classification": {
 					"type": "string",
-					"description": "分类,默认为全部"
+					"description": "分类，默认为全部"
 				},
 				"symbolType": {
 					"type": "string",
-					"description": "符号类型,默认为全部"
+					"description": "符号类型，默认为全部"
 				},
 				"itemsOfPage": {
 					"type": "number",
@@ -9897,7 +9805,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"documentSource": {
 					"type": "string",
@@ -10014,7 +9922,7 @@ window.jdbToolList = [
 				},
 				"leftToRight": {
 					"type": "boolean",
-					"description": "是否仅获取完全框选的图元,false 则触碰即获取"
+					"description": "是否仅获取完全框选的图元，false 则触碰即获取"
 				}
 			},
 			"required": [
@@ -10065,7 +9973,7 @@ window.jdbToolList = [
 			"properties": {
 				"uuid": {
 					"type": "string",
-					"description": "原理图 UUID,默认为关联在同一个 Board 下的原理图"
+					"description": "原理图 UUID，默认为关联在同一个 Board 下的原理图"
 				}
 			},
 			"required": []
@@ -10257,7 +10165,7 @@ window.jdbToolList = [
 			"properties": {
 				"strict": {
 					"type": "boolean",
-					"description": "是否严格检查,当前 PCB 统一为严格检查模式"
+					"description": "是否严格检查，当前 PCB 统一为严格检查模式"
 				},
 				"userInterface": {
 					"type": "boolean",
@@ -10265,7 +10173,7 @@ window.jdbToolList = [
 				},
 				"includeVerboseError": {
 					"type": "string",
-					"description": "是否在返回值中包含详细错误信息,如若为 true,则返回值将始终为数组"
+					"description": "是否在返回值中包含详细错误信息，如若为 true，则返回值将始终为数组"
 				}
 			},
 			"required": [
@@ -10283,7 +10191,7 @@ window.jdbToolList = [
 			"properties": {
 				"strict": {
 					"type": "boolean",
-					"description": "是否严格检查,当前 PCB 统一为严格检查模式"
+					"description": "是否严格检查，当前 PCB 统一为严格检查模式"
 				},
 				"userInterface": {
 					"type": "boolean",
@@ -10291,7 +10199,7 @@ window.jdbToolList = [
 				},
 				"includeVerboseError": {
 					"type": "string",
-					"description": "是否在返回值中包含详细错误信息,如若为 true,则返回值将始终为数组"
+					"description": "是否在返回值中包含详细错误信息，如若为 true，则返回值将始终为数组"
 				}
 			},
 			"required": [
@@ -10899,7 +10807,7 @@ window.jdbToolList = [
 				},
 				"allowOverwrite": {
 					"type": "boolean",
-					"description": "是否允许覆写同名设计规则配置,false 则将在遇到同名设计规则配置时返回 false,请注意可能的数据丢失风险"
+					"description": "是否允许覆写同名设计规则配置，false 则将在遇到同名设计规则配置时返回 false，请注意可能的数据丢失风险"
 				}
 			},
 			"required": []
@@ -10929,7 +10837,7 @@ window.jdbToolList = [
 			"properties": {
 				"id": {
 					"type": "string",
-					"description": "事件 ID,用以防止重复注册事件"
+					"description": "事件 ID，用以防止重复注册事件"
 				},
 				"eventType": {
 					"type": "string",
@@ -11009,7 +10917,7 @@ window.jdbToolList = [
 			"properties": {
 				"layer": {
 					"type": "string",
-					"description": "层,如若不指定任何层则默认为所有层"
+					"description": "层，如若不指定任何层则默认为所有层"
 				}
 			},
 			"required": []
@@ -11087,7 +10995,7 @@ window.jdbToolList = [
 			"properties": {
 				"transparency": {
 					"type": "number",
-					"description": "透明度,范围 0-100"
+					"description": "透明度，范围 0-100"
 				}
 			},
 			"required": [
@@ -11119,7 +11027,7 @@ window.jdbToolList = [
 			"properties": {
 				"layer": {
 					"type": "string",
-					"description": "层,如若不指定任何层则默认为所有层"
+					"description": "层，如若不指定任何层则默认为所有层"
 				},
 				"setOtherLayerVisible": {
 					"type": "boolean",
@@ -11137,7 +11045,7 @@ window.jdbToolList = [
 			"properties": {
 				"layer": {
 					"type": "string",
-					"description": "层,如若不指定任何层则默认为所有层"
+					"description": "层，如若不指定任何层则默认为所有层"
 				},
 				"setOtherLayerInvisible": {
 					"type": "boolean",
@@ -11187,7 +11095,7 @@ window.jdbToolList = [
 			"properties": {
 				"layer": {
 					"type": "string",
-					"description": "层,如若不指定任何层则默认为所有层"
+					"description": "层，如若不指定任何层则默认为所有层"
 				}
 			},
 			"required": []
@@ -11229,7 +11137,7 @@ window.jdbToolList = [
 				},
 				"modelMode": {
 					"type": "string",
-					"description": "导出模式,Outfit = 装配体,Parts = 零件"
+					"description": "导出模式，Outfit = 装配体，Parts = 零件"
 				},
 				"autoGenerateModels": {
 					"type": "boolean",
@@ -11319,28 +11227,28 @@ window.jdbToolList = [
 				},
 				"filterOptions": {
 					"type": "string",
-					"description": "过滤规则,仅应包含需要启用的规则,property 为规则名称,includeValue 为匹配的值"
+					"description": "过滤规则，仅应包含需要启用的规则，property 为规则名称，includeValue 为匹配的值"
 				},
 				"statistics": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "统计,包含所有需要启用的统计项的名称"
+					"description": "统计，包含所有需要启用的统计项的名称"
 				},
 				"property": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "属性,包含所有需要启用的属性的名称"
+					"description": "属性，包含所有需要启用的属性的名称"
 				},
 				"columns": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "列的属性及排序,title、sort、group、orderWeight 不传入则取默认值,null 代表 **无** 或 **空**"
+					"description": "列的属性及排序，title、sort、group、orderWeight 不传入则取默认值，null 代表 **无** 或 **空**"
 				}
 			},
 			"required": []
@@ -11458,11 +11366,11 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "导出层,默认则按照嘉立创生产需求导出"
+					"description": "导出层，默认则按照嘉立创生产需求导出"
 				},
 				"objects": {
 					"type": "string",
-					"description": "导出对象,默认则按照嘉立创生产需求导出"
+					"description": "导出对象，默认则按照嘉立创生产需求导出"
 				}
 			},
 			"required": []
@@ -11523,14 +11431,14 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "导出层,默认则按照嘉立创生产需求导出"
+					"description": "导出层，默认则按照嘉立创生产需求导出"
 				},
 				"objects": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "导出对象,默认则按照嘉立创生产需求导出"
+					"description": "导出对象，默认则按照嘉立创生产需求导出"
 				}
 			},
 			"required": []
@@ -11638,11 +11546,11 @@ window.jdbToolList = [
 			"properties": {
 				"interactive": {
 					"type": "boolean",
-					"description": "是否启用交互式检查如若启用,则会存在弹窗等待用户进行交互,且无法使用 ignoreWarning 参数忽略警告, 即 ignoreWarning 参数将被忽略；如若禁用,则在调用后不会有任何 EDA 内部弹窗,程序执行静默检查, 如若达成下单条件,将返回 true 并在新标签页打开下单页面"
+					"description": "是否启用交互式检查如若启用，则会存在弹窗等待用户进行交互，且无法使用 ignoreWarning 参数忽略警告， 即 ignoreWarning 参数将被忽略；如若禁用，则在调用后不会有任何 EDA 内部弹窗，程序执行静默检查， 如若达成下单条件，将返回 true 并在新标签页打开下单页面"
 				},
 				"ignoreWarning": {
 					"type": "boolean",
-					"description": "在非交互式检查时忽略警告若设置为 true,将会忽略所有检查警告项并尽可能生成下单资料；若设置为 false,存在任意警告将中断执行并返回 false 的结果"
+					"description": "在非交互式检查时忽略警告如果设置为 true，将会忽略所有检查警告项并尽可能生成下单资料；如果设置为 false，存在任意警告将中断执行并返回 false 的结果"
 				}
 			},
 			"required": []
@@ -11656,11 +11564,11 @@ window.jdbToolList = [
 			"properties": {
 				"interactive": {
 					"type": "boolean",
-					"description": "是否启用交互式检查如若启用,则会存在弹窗等待用户进行交互,且无法使用 ignoreWarning 参数忽略警告, 即 ignoreWarning 参数将被忽略；如若禁用,则在调用后不会有任何 EDA 内部弹窗,程序执行静默检查, 如若达成下单条件,将返回 true 并在新标签页打开下单页面"
+					"description": "是否启用交互式检查如若启用，则会存在弹窗等待用户进行交互，且无法使用 ignoreWarning 参数忽略警告， 即 ignoreWarning 参数将被忽略；如若禁用，则在调用后不会有任何 EDA 内部弹窗，程序执行静默检查， 如若达成下单条件，将返回 true 并在新标签页打开下单页面"
 				},
 				"ignoreWarning": {
 					"type": "boolean",
-					"description": "在非交互式检查时忽略警告若设置为 true,将会忽略所有检查警告项并尽可能生成下单资料；若设置为 false,存在任意警告将中断执行并返回 false 的结果"
+					"description": "在非交互式检查时忽略警告如果设置为 true，将会忽略所有检查警告项并尽可能生成下单资料；如果设置为 false，存在任意警告将中断执行并返回 false 的结果"
 				}
 			},
 			"required": []
@@ -11674,11 +11582,11 @@ window.jdbToolList = [
 			"properties": {
 				"interactive": {
 					"type": "boolean",
-					"description": "是否启用交互式检查如若启用,则会存在弹窗等待用户进行交互,且无法使用 ignoreWarning 参数忽略警告, 即 ignoreWarning 参数将被忽略；如若禁用,则在调用后不会有任何 EDA 内部弹窗,程序执行静默检查, 如若达成下单条件,将返回 true 并在新标签页打开下单页面"
+					"description": "是否启用交互式检查如若启用，则会存在弹窗等待用户进行交互，且无法使用 ignoreWarning 参数忽略警告， 即 ignoreWarning 参数将被忽略；如若禁用，则在调用后不会有任何 EDA 内部弹窗，程序执行静默检查， 如若达成下单条件，将返回 true 并在新标签页打开下单页面"
 				},
 				"ignoreWarning": {
 					"type": "boolean",
-					"description": "在非交互式检查时忽略警告若设置为 true,将会忽略所有检查警告项并尽可能生成下单资料；若设置为 false,存在任意警告将中断执行并返回 false 的结果"
+					"description": "在非交互式检查时忽略警告如果设置为 true，将会忽略所有检查警告项并尽可能生成下单资料；如果设置为 false，存在任意警告将中断执行并返回 false 的结果"
 				}
 			},
 			"required": []
@@ -11692,11 +11600,11 @@ window.jdbToolList = [
 			"properties": {
 				"interactive": {
 					"type": "boolean",
-					"description": "是否启用交互式检查如若启用,则会存在弹窗等待用户进行交互,且无法使用 ignoreWarning 参数忽略警告, 即 ignoreWarning 参数将被忽略；如若禁用,则在调用后不会有任何 EDA 内部弹窗,程序执行静默检查, 如若达成下单条件,将返回 true 并在新标签页打开下单页面"
+					"description": "是否启用交互式检查如若启用，则会存在弹窗等待用户进行交互，且无法使用 ignoreWarning 参数忽略警告， 即 ignoreWarning 参数将被忽略；如若禁用，则在调用后不会有任何 EDA 内部弹窗，程序执行静默检查， 如若达成下单条件，将返回 true 并在新标签页打开下单页面"
 				},
 				"ignoreWarning": {
 					"type": "boolean",
-					"description": "在非交互式检查时忽略警告若设置为 true,将会忽略所有检查警告项并尽可能生成下单资料；若设置为 false,存在任意警告将中断执行并返回 false 的结果"
+					"description": "在非交互式检查时忽略警告如果设置为 true，将会忽略所有检查警告项并尽可能生成下单资料；如果设置为 false，存在任意警告将中断执行并返回 false 的结果"
 				}
 			},
 			"required": []
@@ -11714,7 +11622,7 @@ window.jdbToolList = [
 				},
 				"template": {
 					"type": "string",
-					"description": "BOM 模板名称,如若为 undefined 则自动从 templateFile 中取值"
+					"description": "BOM 模板名称，如若为 undefined 则自动从 templateFile 中取值"
 				}
 			},
 			"required": [
@@ -11760,7 +11668,7 @@ window.jdbToolList = [
 			"properties": {
 				"imageBlob": {
 					"type": "string",
-					"description": "图像 Blob 文件,可以使用 方法从文件系统读取文件"
+					"description": "图像 Blob 文件，可以使用 方法从文件系统读取文件"
 				},
 				"imageWidth": {
 					"type": "number",
@@ -11772,19 +11680,19 @@ window.jdbToolList = [
 				},
 				"tolerance": {
 					"type": "number",
-					"description": "容差,取值范围 0-1"
+					"description": "容差，取值范围 0-1"
 				},
 				"simplification": {
 					"type": "number",
-					"description": "简化,取值范围 0-1"
+					"description": "简化，取值范围 0-1"
 				},
 				"smoothing": {
 					"type": "number",
-					"description": "平滑,取值范围 0-1.33"
+					"description": "平滑，取值范围 0-1.33"
 				},
 				"despeckling": {
 					"type": "number",
-					"description": "去斑,取值范围 0-5"
+					"description": "去斑，取值范围 0-5"
 				},
 				"whiteAsBackgroundColor": {
 					"type": "boolean",
@@ -11883,7 +11791,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "图元类型数组,如若指定图元类型不存在网络属性,返回的数据将恒为空"
+					"description": "图元类型数组，如若指定图元类型不存在网络属性，返回的数据将恒为空"
 				}
 			},
 			"required": [
@@ -12080,7 +11988,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "圆弧线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "圆弧线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12099,7 +12007,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "圆弧线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "圆弧线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12227,7 +12135,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "器件的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "器件的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12246,7 +12154,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "器件的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "器件的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12351,7 +12259,7 @@ window.jdbToolList = [
 				},
 				"precision": {
 					"type": "number",
-					"description": "精度,取值范围 0-4"
+					"description": "精度，取值范围 0-4"
 				},
 				"primitiveLock": {
 					"type": "boolean",
@@ -12385,7 +12293,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "尺寸标注的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "尺寸标注的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12404,7 +12312,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "尺寸标注的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "尺寸标注的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12527,7 +12435,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "填充的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "填充的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12546,7 +12454,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "填充的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "填充的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12632,7 +12540,7 @@ window.jdbToolList = [
 				},
 				"complexPolygon": {
 					"type": "string",
-					"description": "图像源数据（复杂多边形）,可以使用 PCB_MathPolygon.convertImageToComplexPolygon() 方法将图像文件转换为复杂多边形数据"
+					"description": "图像源数据（复杂多边形），可以使用 PCB_MathPolygon.convertImageToComplexPolygon() 方法将图像文件转换为复杂多边形数据"
 				},
 				"layer": {
 					"type": "string",
@@ -12686,7 +12594,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "图像的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "图像的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12705,7 +12613,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "图像的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "图像的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12840,7 +12748,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "直线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "直线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -12859,7 +12767,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "直线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "直线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13003,7 +12911,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "二进制内嵌对象的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "二进制内嵌对象的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13022,7 +12930,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "二进制内嵌对象的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "二进制内嵌对象的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13120,7 +13028,7 @@ window.jdbToolList = [
 				},
 				"hole": {
 					"type": "string",
-					"description": "孔,null 标识无孔"
+					"description": "孔，null 标识无孔"
 				},
 				"holeOffsetX": {
 					"type": "number",
@@ -13148,7 +13056,7 @@ window.jdbToolList = [
 				},
 				"solderMaskAndPasteMaskExpansion": {
 					"type": "string",
-					"description": "阻焊/助焊扩展,null 表示遵循规则"
+					"description": "阻焊/助焊扩展，null 表示遵循规则"
 				},
 				"heatWelding": {
 					"type": "string",
@@ -13189,7 +13097,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "焊盘的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "焊盘的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13205,7 +13113,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "焊盘的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "焊盘的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13342,7 +13250,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "折线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "折线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13358,7 +13266,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "折线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "折线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13501,7 +13409,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "覆铜边框的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "覆铜边框的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13517,7 +13425,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "覆铜边框的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "覆铜边框的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13648,7 +13556,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "区域的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "区域的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13667,7 +13575,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "区域的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "区域的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13690,7 +13598,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "区域规则类型,只会匹配所有规则类型均一致的图元"
+					"description": "区域规则类型，只会匹配所有规则类型均一致的图元"
 				},
 				"primitiveLock": {
 					"type": "boolean",
@@ -13715,7 +13623,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "区域规则类型,只会匹配所有规则类型均一致的图元"
+					"description": "区域规则类型，只会匹配所有规则类型均一致的图元"
 				},
 				"primitiveLock": {
 					"type": "boolean",
@@ -13778,11 +13686,11 @@ window.jdbToolList = [
 				},
 				"designRuleBlindViaName": {
 					"type": "string",
-					"description": "盲埋孔设计规则项名称,定义过孔的开始层与结束层,null 表示非盲埋孔"
+					"description": "盲埋孔设计规则项名称，定义过孔的开始层与结束层，null 表示非盲埋孔"
 				},
 				"solderMaskExpansion": {
 					"type": "string",
-					"description": "阻焊/助焊扩展,null 表示跟随规则"
+					"description": "阻焊/助焊扩展，null 表示跟随规则"
 				},
 				"primitiveLock": {
 					"type": "boolean",
@@ -13819,7 +13727,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "过孔的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "过孔的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13835,7 +13743,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "过孔的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "过孔的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -13924,7 +13832,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "器件位号_引脚编号,格式为 ['U1_1', 'U1_2']"
+					"description": "器件位号_引脚编号，格式为 ['U1_1', 'U1_2']"
 				},
 				"nets": {
 					"type": "array",
@@ -14032,7 +13940,7 @@ window.jdbToolList = [
 			"properties": {
 				"strict": {
 					"type": "boolean",
-					"description": "是否严格检查,严格检查时存在 Warning 将返回 false,否则返回 true"
+					"description": "是否严格检查，严格检查时存在 Warning 将返回 false，否则返回 true"
 				},
 				"userInterface": {
 					"type": "boolean",
@@ -14050,7 +13958,7 @@ window.jdbToolList = [
 			"properties": {
 				"id": {
 					"type": "string",
-					"description": "事件 ID,用以防止重复注册事件"
+					"description": "事件 ID，用以防止重复注册事件"
 				},
 				"eventType": {
 					"type": "string",
@@ -14124,28 +14032,28 @@ window.jdbToolList = [
 				},
 				"filterOptions": {
 					"type": "string",
-					"description": "过滤规则,仅应包含需要启用的规则,property 为规则名称,includeValue 为匹配的值"
+					"description": "过滤规则，仅应包含需要启用的规则，property 为规则名称，includeValue 为匹配的值"
 				},
 				"statistics": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "统计,包含所有需要启用的统计项的名称"
+					"description": "统计，包含所有需要启用的统计项的名称"
 				},
 				"property": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "属性,包含所有需要启用的属性的名称"
+					"description": "属性，包含所有需要启用的属性的名称"
 				},
 				"columns": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "列的属性及排序,title、sort、group、orderWeight 不传入则取默认值,null 代表 **无** 或 **空**"
+					"description": "列的属性及排序，title、sort、group、orderWeight 不传入则取默认值，null 代表 **无** 或 **空**"
 				}
 			},
 			"required": []
@@ -14177,11 +14085,11 @@ window.jdbToolList = [
 			"properties": {
 				"interactive": {
 					"type": "boolean",
-					"description": "是否启用交互式检查如若启用,则会存在弹窗等待用户进行交互,且无法使用 ignoreWarning 参数忽略警告, 即 ignoreWarning 参数将被忽略；如若禁用,则在调用后不会有任何 EDA 内部弹窗,程序执行静默检查, 如若达成下单条件,将返回 true 并在新标签页打开下单页面"
+					"description": "是否启用交互式检查如若启用，则会存在弹窗等待用户进行交互，且无法使用 ignoreWarning 参数忽略警告， 即 ignoreWarning 参数将被忽略；如若禁用，则在调用后不会有任何 EDA 内部弹窗，程序执行静默检查， 如若达成下单条件，将返回 true 并在新标签页打开下单页面"
 				},
 				"ignoreWarning": {
 					"type": "boolean",
-					"description": "在非交互式检查时忽略警告若设置为 true,将会忽略所有检查警告项并尽可能生成下单资料；若设置为 false,存在任意警告将中断执行并返回 false 的结果"
+					"description": "在非交互式检查时忽略警告如果设置为 true，将会忽略所有检查警告项并尽可能生成下单资料；如果设置为 false，存在任意警告将中断执行并返回 false 的结果"
 				}
 			},
 			"required": []
@@ -14195,11 +14103,11 @@ window.jdbToolList = [
 			"properties": {
 				"interactive": {
 					"type": "boolean",
-					"description": "是否启用交互式检查如若启用,则会存在弹窗等待用户进行交互,且无法使用 ignoreWarning 参数忽略警告, 即 ignoreWarning 参数将被忽略；如若禁用,则在调用后不会有任何 EDA 内部弹窗,程序执行静默检查, 如若达成下单条件,将返回 true 并在新标签页打开下单页面"
+					"description": "是否启用交互式检查如若启用，则会存在弹窗等待用户进行交互，且无法使用 ignoreWarning 参数忽略警告， 即 ignoreWarning 参数将被忽略；如若禁用，则在调用后不会有任何 EDA 内部弹窗，程序执行静默检查， 如若达成下单条件，将返回 true 并在新标签页打开下单页面"
 				},
 				"ignoreWarning": {
 					"type": "boolean",
-					"description": "在非交互式检查时忽略警告若设置为 true,将会忽略所有检查警告项并尽可能生成下单资料；若设置为 false,存在任意警告将中断执行并返回 false 的结果"
+					"description": "在非交互式检查时忽略警告如果设置为 true，将会忽略所有检查警告项并尽可能生成下单资料；如果设置为 false，存在任意警告将中断执行并返回 false 的结果"
 				}
 			},
 			"required": []
@@ -14320,19 +14228,19 @@ window.jdbToolList = [
 				},
 				"color": {
 					"type": "string",
-					"description": "颜色,null 表示默认"
+					"description": "颜色，null 表示默认"
 				},
 				"fillColor": {
 					"type": "string",
-					"description": "填充颜色,none 表示无填充,null 表示默认"
+					"description": "填充颜色，none 表示无填充，null 表示默认"
 				},
 				"lineWidth": {
 					"type": "number",
-					"description": "线宽,范围 1-10,null 表示默认"
+					"description": "线宽，范围 1-10，null 表示默认"
 				},
 				"lineType": {
 					"type": "string",
-					"description": "线型,null 表示默认"
+					"description": "线型，null 表示默认"
 				}
 			},
 			"required": []
@@ -14362,7 +14270,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "圆弧的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "圆弧的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -14381,7 +14289,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "圆弧的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "圆弧的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -14437,19 +14345,19 @@ window.jdbToolList = [
 				},
 				"line": {
 					"type": "string",
-					"description": "多段线坐标组,每段都是连续的一组 [x1, y1, x2, y2, x3, y3] 所描述的线,如若多段线彼此无任何连接则创建将会失败"
+					"description": "多段线坐标组，每段都是连续的一组 [x1, y1, x2, y2, x3, y3] 所描述的线，如若多段线彼此无任何连接则创建将会失败"
 				},
 				"color": {
 					"type": "string",
-					"description": "总线颜色,null 表示默认"
+					"description": "总线颜色，null 表示默认"
 				},
 				"lineWidth": {
 					"type": "number",
-					"description": "线宽,范围 1-10,null 表示默认"
+					"description": "线宽，范围 1-10，null 表示默认"
 				},
 				"lineType": {
 					"type": "string",
-					"description": "线型,null 表示默认"
+					"description": "线型，null 表示默认"
 				}
 			},
 			"required": []
@@ -14479,7 +14387,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "总线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "总线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -14498,7 +14406,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "总线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "总线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -14562,23 +14470,23 @@ window.jdbToolList = [
 				},
 				"color": {
 					"type": "string",
-					"description": "颜色,null 表示默认"
+					"description": "颜色，null 表示默认"
 				},
 				"fillColor": {
 					"type": "string",
-					"description": "填充颜色,none 表示无填充,null 表示默认"
+					"description": "填充颜色，none 表示无填充，null 表示默认"
 				},
 				"lineWidth": {
 					"type": "number",
-					"description": "线宽,范围 1-10,null 表示默认"
+					"description": "线宽，范围 1-10，null 表示默认"
 				},
 				"lineType": {
 					"type": "string",
-					"description": "线型,null 表示默认"
+					"description": "线型，null 表示默认"
 				},
 				"fillStyle": {
 					"type": "string",
-					"description": "填充样式,null 表示默认"
+					"description": "填充样式，null 表示默认"
 				}
 			},
 			"required": []
@@ -14611,7 +14519,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "圆的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "圆的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -14627,7 +14535,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "圆的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "圆的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -14839,7 +14747,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "器件的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "器件的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -14858,7 +14766,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "器件的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "器件的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15084,7 +14992,7 @@ window.jdbToolList = [
 				},
 				"rotation": {
 					"type": "number",
-					"description": "旋转角度, 0 90 180 270"
+					"description": "旋转角度， 0 90 180 270"
 				},
 				"pinLength": {
 					"type": "number",
@@ -15092,7 +15000,7 @@ window.jdbToolList = [
 				},
 				"pinColor": {
 					"type": "string",
-					"description": "引脚颜色,null 表示默认"
+					"description": "引脚颜色，null 表示默认"
 				},
 				"pinShape": {
 					"type": "string",
@@ -15130,7 +15038,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "引脚的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "引脚的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15149,7 +15057,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "引脚的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "引脚的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15204,23 +15112,23 @@ window.jdbToolList = [
 					"items": {
 						"type": "number"
 					},
-					"description": "坐标组,连续的一组 [x1, y1, x2, y2, x3, y3] 所描述的线"
+					"description": "坐标组，连续的一组 [x1, y1, x2, y2, x3, y3] 所描述的线"
 				},
 				"color": {
 					"type": "string",
-					"description": "颜色,null 表示默认"
+					"description": "颜色，null 表示默认"
 				},
 				"fillColor": {
 					"type": "string",
-					"description": "填充颜色,none 表示无填充,null 表示默认"
+					"description": "填充颜色，none 表示无填充，null 表示默认"
 				},
 				"lineWidth": {
 					"type": "number",
-					"description": "线宽,范围 1-10,null 表示默认"
+					"description": "线宽，范围 1-10，null 表示默认"
 				},
 				"lineType": {
 					"type": "string",
-					"description": "线型,null 表示默认"
+					"description": "线型，null 表示默认"
 				}
 			},
 			"required": [
@@ -15252,7 +15160,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "多边形的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "多边形的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15271,7 +15179,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "多边形的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "多边形的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15343,27 +15251,27 @@ window.jdbToolList = [
 				},
 				"rotation": {
 					"type": "number",
-					"description": "旋转角度,绕左上点旋转, 0 90 180 270"
+					"description": "旋转角度，绕左上点旋转， 0 90 180 270"
 				},
 				"color": {
 					"type": "string",
-					"description": "颜色,null 表示默认"
+					"description": "颜色，null 表示默认"
 				},
 				"fillColor": {
 					"type": "string",
-					"description": "填充颜色,none 表示无填充,null 表示默认"
+					"description": "填充颜色，none 表示无填充，null 表示默认"
 				},
 				"lineWidth": {
 					"type": "number",
-					"description": "线宽,范围 1-10,null 表示默认"
+					"description": "线宽，范围 1-10，null 表示默认"
 				},
 				"lineType": {
 					"type": "string",
-					"description": "线型,null 表示默认"
+					"description": "线型，null 表示默认"
 				},
 				"fillStyle": {
 					"type": "string",
-					"description": "填充样式,null 表示默认"
+					"description": "填充样式，null 表示默认"
 				}
 			},
 			"required": []
@@ -15393,7 +15301,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "矩形的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "矩形的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15412,7 +15320,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "矩形的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "矩形的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15476,19 +15384,19 @@ window.jdbToolList = [
 				},
 				"rotation": {
 					"type": "number",
-					"description": "旋转角度, 0 90 180 270"
+					"description": "旋转角度， 0 90 180 270"
 				},
 				"textColor": {
 					"type": "string",
-					"description": "文本颜色,null 表示默认"
+					"description": "文本颜色，null 表示默认"
 				},
 				"fontName": {
 					"type": "string",
-					"description": "字体名称,null 表示默认"
+					"description": "字体名称，null 表示默认"
 				},
 				"fontSize": {
 					"type": "number",
-					"description": "字体大小,null 表示默认"
+					"description": "字体大小，null 表示默认"
 				},
 				"bold": {
 					"type": "boolean",
@@ -15504,7 +15412,7 @@ window.jdbToolList = [
 				},
 				"alignMode": {
 					"type": "number",
-					"description": "对齐模式,0 左顶,1 中顶,2 右顶,3 左中,4 中中,5 右中,6 左底,7 中底,8 右底"
+					"description": "对齐模式，0 左顶，1 中顶，2 右顶，3 左中，4 中中，5 右中，6 左底，7 中底，8 右底"
 				}
 			},
 			"required": []
@@ -15534,7 +15442,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "文本的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "文本的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15553,7 +15461,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "文本的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "文本的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15605,23 +15513,23 @@ window.jdbToolList = [
 			"properties": {
 				"line": {
 					"type": "string",
-					"description": "多段线坐标组,每段都是连续的一组 [x1, y1, x2, y2, x3, y3] 所描述的线,如若多段线彼此无任何连接则创建将会失败"
+					"description": "多段线坐标组，每段都是连续的一组 [x1, y1, x2, y2, x3, y3] 所描述的线，如若多段线彼此无任何连接则创建将会失败"
 				},
 				"net": {
 					"type": "string",
-					"description": "网络名称,如若未指定,则遵循: 1. 没有坐标落在任何图元上,则默认为空网络； 2. 有一个坐标点在某个网络的图元上,则跟随该图元的网络； 3. 有多个坐标点在多个不同网络的图元上,则创建失败如若已指定,则遵循: 1. 有一个或多个坐标点在其他网络的图元上,且其他图元并未显式（通常指的是包含网络标签或网络端口）指定网络,则其他图元跟随指定的网络； 2. 如若其他图元指定了网络,则创建失败"
+					"description": "网络名称，如若未指定，则遵循： 1. 没有坐标落在任何图元上，则默认为空网络； 2. 有一个坐标点在某个网络的图元上，则跟随该图元的网络； 3. 有多个坐标点在多个不同网络的图元上，则创建失败如若已指定，则遵循： 1. 有一个或多个坐标点在其他网络的图元上，且其他图元并未显式（通常指的是包含网络标签或网络端口）指定网络，则其他图元跟随指定的网络； 2. 如若其他图元指定了网络，则创建失败"
 				},
 				"color": {
 					"type": "string",
-					"description": "导线颜色,null 表示默认"
+					"description": "导线颜色，null 表示默认"
 				},
 				"lineWidth": {
 					"type": "number",
-					"description": "线宽,范围 1-10,null 表示默认"
+					"description": "线宽，范围 1-10，null 表示默认"
 				},
 				"lineType": {
 					"type": "string",
-					"description": "线型,null 表示默认"
+					"description": "线型，null 表示默认"
 				}
 			},
 			"required": [
@@ -15656,7 +15564,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "导线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "导线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15672,7 +15580,7 @@ window.jdbToolList = [
 			"properties": {
 				"primitiveIds": {
 					"type": "string",
-					"description": "导线的图元 ID,可以为字符串或字符串数组,如若为数组,则返回的也是数组"
+					"description": "导线的图元 ID，可以为字符串或字符串数组，如若为数组，则返回的也是数组"
 				}
 			},
 			"required": [
@@ -15753,7 +15661,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "器件位号_引脚编号,格式为 ['U1_1', 'U1_2']"
+					"description": "器件位号_引脚编号，格式为 ['U1_1', 'U1_2']"
 				},
 				"nets": {
 					"type": "array",
@@ -15851,7 +15759,7 @@ window.jdbToolList = [
 				},
 				"data": {
 					"type": "string",
-					"description": "请求发送的数据,可以是直接数据或 URLSearchParams 对象,若 method 为 HEAD 或 GET,本参数将被忽略"
+					"description": "请求发送的数据，可以是直接数据或 URLSearchParams 对象，如果 method 为 HEAD 或 GET，本参数将被忽略"
 				},
 				"options": {
 					"type": "string",
@@ -15873,7 +15781,7 @@ window.jdbToolList = [
 			"properties": {
 				"content": {
 					"type": "string",
-					"description": "消息文本,支持使用 \\n 换行"
+					"description": "消息文本，支持使用 \\n 换行"
 				},
 				"title": {
 					"type": "string",
@@ -15905,7 +15813,7 @@ window.jdbToolList = [
 			"properties": {
 				"content": {
 					"type": "string",
-					"description": "消息文本,支持使用 \\n 换行"
+					"description": "消息文本，支持使用 \\n 换行"
 				},
 				"title": {
 					"type": "string",
@@ -15913,7 +15821,7 @@ window.jdbToolList = [
 				},
 				"buttonTitle": {
 					"type": "string",
-					"description": "按钮标题,为空则不显示按钮"
+					"description": "按钮标题，为空则不显示按钮"
 				}
 			},
 			"required": [
@@ -15949,7 +15857,7 @@ window.jdbToolList = [
 				},
 				"otherProperty": {
 					"type": "string",
-					"description": "其它参数,可参考 The HTML Input element"
+					"description": "其它参数，可参考 The HTML Input element"
 				},
 				"callbackFn": {
 					"type": "string",
@@ -15967,7 +15875,7 @@ window.jdbToolList = [
 			"properties": {
 				"options": {
 					"type": "string",
-					"description": "选项列表,可以为字符串数组或对象数组,在未指定 defaultOption 时,默认值为列表的第一项；如若为字符串数组,则选项的值和选项的展示内容将保持一致；如若为对象数组,则 value 表示选项的值,displayContent 表示选项的展示内容"
+					"description": "选项列表，可以为字符串数组或对象数组，在未指定 defaultOption 时，默认值为列表的第一项；如若为字符串数组，则选项的值和选项的展示内容将保持一致；如若为对象数组，则 value 表示选项的值，displayContent 表示选项的展示内容"
 				},
 				"beforeContent": {
 					"type": "string",
@@ -15983,11 +15891,11 @@ window.jdbToolList = [
 				},
 				"defaultOption": {
 					"type": "string",
-					"description": "默认选项,以选项的值作为匹配参数,如若 multiple 参数为 true,则此处需要传入字符串数组"
+					"description": "默认选项，以选项的值作为匹配参数，如若 multiple 参数为 true，则此处需要传入字符串数组"
 				},
 				"multiple": {
 					"type": "string",
-					"description": "是否支持多选,默认为单选框"
+					"description": "是否支持多选，默认为单选框"
 				},
 				"callbackFn": {
 					"type": "string",
@@ -16005,7 +15913,7 @@ window.jdbToolList = [
 			"properties": {
 				"options": {
 					"type": "string",
-					"description": "选项列表,可以为字符串数组或对象数组,在未指定 defaultOption 时,默认值为列表的第一项；如若为字符串数组,则选项的值和选项的展示内容将保持一致；如若为对象数组,则 value 表示选项的值,displayContent 表示选项的展示内容"
+					"description": "选项列表，可以为字符串数组或对象数组，在未指定 defaultOption 时，默认值为列表的第一项；如若为字符串数组，则选项的值和选项的展示内容将保持一致；如若为对象数组，则 value 表示选项的值，displayContent 表示选项的展示内容"
 				},
 				"beforeContent": {
 					"type": "string",
@@ -16024,7 +15932,7 @@ window.jdbToolList = [
 					"items": {
 						"type": "string"
 					},
-					"description": "默认选项数组,以选项的值作为匹配参数"
+					"description": "默认选项数组，以选项的值作为匹配参数"
 				},
 				"multiple": {
 					"type": "string",
@@ -16139,7 +16047,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_Environment.setKeepProjectHasOnlyOneBoard",
-		"description": "设置环境:保持工程仅拥有一个板子",
+		"description": "设置环境：保持工程仅拥有一个板子",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -16163,7 +16071,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				},
 				"cbbName": {
 					"type": "string"
@@ -16190,7 +16098,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取,如若不传入,则为系统库"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取，如若不传入，则为系统库"
 				}
 			},
 			"required": [
@@ -16246,7 +16154,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -16266,7 +16174,7 @@ window.jdbToolList = [
 				},
 				"libraryUuid": {
 					"type": "string",
-					"description": "库 UUID,可以使用 LIB_LibrariesList 内的接口获取"
+					"description": "库 UUID，可以使用 LIB_LibrariesList 内的接口获取"
 				}
 			},
 			"required": [
@@ -16332,7 +16240,7 @@ window.jdbToolList = [
 				},
 				"props": {
 					"type": "object",
-					"description": "导入参数,参考 EDA 前端 **导入** 窗口内的配置项"
+					"description": "导入参数，参考 EDA 前端 **导入** 窗口内的配置项"
 				},
 				"saveTo": {
 					"type": "string",
@@ -16361,7 +16269,7 @@ window.jdbToolList = [
 				},
 				"props": {
 					"type": "object",
-					"description": "导入参数,参考 EDA 前端 **导入** 窗口内的配置项"
+					"description": "导入参数，参考 EDA 前端 **导入** 窗口内的配置项"
 				},
 				"saveTo": {
 					"type": "string",
@@ -16398,11 +16306,11 @@ window.jdbToolList = [
 			"properties": {
 				"uri": {
 					"type": "string",
-					"description": "文件资源定位符如若结尾为斜杠 /（Windows 为反斜杠 \\）,则识别为文件夹；如若结尾非斜杠,则识别为完整文件名,此时 fileName 参数将被忽略"
+					"description": "文件资源定位符如若结尾为斜杠 /（Windows 为反斜杠 \\），则识别为文件夹；如若结尾非斜杠，则识别为完整文件名，此时 fileName 参数将被忽略"
 				},
 				"force": {
 					"type": "boolean",
-					"description": "强制删除文件夹（当欲删除的是文件夹且文件夹内有文件时,是否强制删除该文件夹）"
+					"description": "强制删除文件夹（当欲删除的是文件夹且文件夹内有文件时，是否强制删除该文件夹）"
 				}
 			},
 			"required": [
@@ -16526,7 +16434,7 @@ window.jdbToolList = [
 			"properties": {
 				"uri": {
 					"type": "string",
-					"description": "文件资源定位符,需要包含完整的文件名称的绝对路径"
+					"description": "文件资源定位符，需要包含完整的文件名称的绝对路径"
 				}
 			},
 			"required": [
@@ -16562,7 +16470,7 @@ window.jdbToolList = [
 			"properties": {
 				"uri": {
 					"type": "string",
-					"description": "文件资源定位符如若结尾为斜杠 /（Windows 为反斜杠 \\）,则识别为文件夹；如若结尾非斜杠,则识别为完整文件名,此时 fileName 参数将被忽略"
+					"description": "文件资源定位符如若结尾为斜杠 /（Windows 为反斜杠 \\），则识别为文件夹；如若结尾非斜杠，则识别为完整文件名，此时 fileName 参数将被忽略"
 				},
 				"fileData": {
 					"type": "string",
@@ -16706,7 +16614,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_I18n.importMultilingualLanguage",
-		"description": "导入多语言:指定命名空间和语言",
+		"description": "导入多语言：指定命名空间和语言",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -16732,7 +16640,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_I18n.importMultilingualNamespace",
-		"description": "导入多语言:指定命名空间",
+		"description": "导入多语言：指定命名空间",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -16775,15 +16683,15 @@ window.jdbToolList = [
 			"properties": {
 				"tag": {
 					"type": "string",
-					"description": "文本标签,对应多语言文件键值对中的键"
+					"description": "文本标签，对应多语言文件键值对中的键"
 				},
 				"namespace": {
 					"type": "string",
-					"description": "文本命名空间,在扩展运行环境内默认为扩展的 UUID,否则为系统默认命名空间"
+					"description": "文本命名空间，在扩展运行环境内默认为扩展的 UUID，否则为系统默认命名空间"
 				},
 				"language": {
 					"type": "string",
-					"description": "语言,undefined 为 EDA 当前的显示语言"
+					"description": "语言，undefined 为 EDA 当前的显示语言"
 				},
 				"args": {
 					"type": "array",
@@ -16806,7 +16714,7 @@ window.jdbToolList = [
 			"properties": {
 				"id": {
 					"type": "string",
-					"description": "内联框架窗口 ID,如若传入 undefined,将关闭由本扩展打开的所有内联框架窗口"
+					"description": "内联框架窗口 ID，如若传入 undefined，将关闭由本扩展打开的所有内联框架窗口"
 				}
 			},
 			"required": []
@@ -16834,7 +16742,7 @@ window.jdbToolList = [
 			"properties": {
 				"htmlFileName": {
 					"type": "string",
-					"description": "需要加载的 HTML 文件在扩展包内的路径,从扩展根目录起始,例如 /iframe/index.html"
+					"description": "需要加载的 HTML 文件在扩展包内的路径，从扩展根目录起始，例如 /iframe/index.html"
 				},
 				"width": {
 					"type": "number",
@@ -16846,7 +16754,7 @@ window.jdbToolList = [
 				},
 				"id": {
 					"type": "string",
-					"description": "内联框架窗口 ID,用于关闭内联框架窗口"
+					"description": "内联框架窗口 ID，用于关闭内联框架窗口"
 				},
 				"props": {
 					"type": "string",
@@ -16905,7 +16813,7 @@ window.jdbToolList = [
 			"properties": {
 				"progress": {
 					"type": "number",
-					"description": "进度值,取值范围 0-100"
+					"description": "进度值，取值范围 0-100"
 				},
 				"title": {
 					"type": "string",
@@ -16970,7 +16878,7 @@ window.jdbToolList = [
 				},
 				"types": {
 					"type": "string",
-					"description": "日志类型数组,可以在指定的日志类型内查找"
+					"description": "日志类型数组，可以在指定的日志类型内查找"
 				}
 			},
 			"required": []
@@ -16984,7 +16892,7 @@ window.jdbToolList = [
 			"properties": {
 				"types": {
 					"type": "string",
-					"description": "日志类型数组,可以同时指定多种日志类型,如若不指定则为全部类型"
+					"description": "日志类型数组，可以同时指定多种日志类型，如若不指定则为全部类型"
 				}
 			},
 			"required": []
@@ -16998,7 +16906,7 @@ window.jdbToolList = [
 			"properties": {
 				"tip": {
 					"type": "string",
-					"description": "提示内容,如若传入,则仅当当前提示为指定内容时才移除"
+					"description": "提示内容，如若传入，则仅当当前提示为指定内容时才移除"
 				}
 			},
 			"required": []
@@ -17016,7 +16924,7 @@ window.jdbToolList = [
 				},
 				"msTimeout": {
 					"type": "number",
-					"description": "展示时间,以毫秒（ms）为单位,如若不传入则持续展示,直到调用 removeFollowMouseTip 或被其它提示覆盖"
+					"description": "展示时间，以毫秒（ms）为单位，如若不传入则持续展示，直到调用 removeFollowMouseTip 或被其它提示覆盖"
 				}
 			},
 			"required": [
@@ -17040,7 +16948,7 @@ window.jdbToolList = [
 				},
 				"timer": {
 					"type": "number",
-					"description": "自动关闭倒计时秒数,0 为不自动关闭"
+					"description": "自动关闭倒计时秒数，0 为不自动关闭"
 				},
 				"bottomPanel": {
 					"type": "string",
@@ -17052,7 +16960,7 @@ window.jdbToolList = [
 				},
 				"buttonCallbackFn": {
 					"type": "string",
-					"description": "回调函数内容,字符串形式,会被自动解析并执行"
+					"description": "回调函数内容，字符串形式，会被自动解析并执行"
 				}
 			},
 			"required": [
@@ -17068,7 +16976,7 @@ window.jdbToolList = [
 			"properties": {
 				"content": {
 					"type": "string",
-					"description": "消息文本,支持使用 \\n 换行"
+					"description": "消息文本，支持使用 \\n 换行"
 				},
 				"title": {
 					"type": "string",
@@ -17084,7 +16992,7 @@ window.jdbToolList = [
 				},
 				"callbackFn": {
 					"type": "boolean",
-					"description": "回调函数,如需调用扩展内的函数,请在函数名前加上扩展的唯一 ID,以西文句号 . 分隔"
+					"description": "回调函数，如需调用扩展内的函数，请在函数名前加上扩展的唯一 ID，以西文句号 . 分隔"
 				}
 			},
 			"required": [
@@ -17100,7 +17008,7 @@ window.jdbToolList = [
 			"properties": {
 				"content": {
 					"type": "string",
-					"description": "消息文本,支持使用 \\n 换行"
+					"description": "消息文本，支持使用 \\n 换行"
 				},
 				"title": {
 					"type": "string",
@@ -17108,7 +17016,7 @@ window.jdbToolList = [
 				},
 				"buttonTitle": {
 					"type": "string",
-					"description": "按钮标题,为空则不显示按钮"
+					"description": "按钮标题，为空则不显示按钮"
 				}
 			},
 			"required": [
@@ -17127,7 +17035,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.publish",
-		"description": "私有消息总线:发布消息",
+		"description": "私有消息总线：发布消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17148,7 +17056,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.publishPublic",
-		"description": "公共消息总线:发布消息",
+		"description": "公共消息总线：发布消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17169,7 +17077,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.pull",
-		"description": "私有消息总线:拉消息",
+		"description": "私有消息总线：拉消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17190,7 +17098,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.pullAsync",
-		"description": "私有消息总线:拉消息 Promise 版本",
+		"description": "私有消息总线：拉消息 Promise 版本",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17206,7 +17114,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.pullAsyncPublic",
-		"description": "公共消息总线:拉消息 Promise 版本",
+		"description": "公共消息总线：拉消息 Promise 版本",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17222,7 +17130,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.pullPublic",
-		"description": "公共消息总线:拉消息",
+		"description": "公共消息总线：拉消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17243,7 +17151,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.push",
-		"description": "私有消息总线:推消息",
+		"description": "私有消息总线：推消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17264,7 +17172,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.pushPublic",
-		"description": "公共消息总线:推消息",
+		"description": "公共消息总线：推消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17294,7 +17202,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.rpcCall",
-		"description": "私有消息总线:调用 RPC 服务",
+		"description": "私有消息总线：调用 RPC 服务",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17318,7 +17226,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.rpcCallPublic",
-		"description": "公共消息总线:调用 RPC 服务",
+		"description": "公共消息总线：调用 RPC 服务",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17342,7 +17250,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.rpcService",
-		"description": "私有消息总线:注册 RPC 服务",
+		"description": "私有消息总线：注册 RPC 服务",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17363,7 +17271,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.rpcServicePublic",
-		"description": "公共消息总线:注册 RPC 服务",
+		"description": "公共消息总线：注册 RPC 服务",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17384,7 +17292,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.subscribe",
-		"description": "私有消息总线:订阅消息",
+		"description": "私有消息总线：订阅消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17405,7 +17313,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.subscribeOnce",
-		"description": "私有消息总线:订阅单次消息",
+		"description": "私有消息总线：订阅单次消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17426,7 +17334,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.subscribeOncePublic",
-		"description": "公共消息总线:订阅单次消息",
+		"description": "公共消息总线：订阅单次消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17447,7 +17355,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_MessageBus.subscribePublic",
-		"description": "公共消息总线:订阅消息",
+		"description": "公共消息总线：订阅消息",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17528,7 +17436,7 @@ window.jdbToolList = [
 			"properties": {
 				"tab": {
 					"type": "string",
-					"description": "标签页,如若不指定则不切换标签页"
+					"description": "标签页，如若不指定则不切换标签页"
 				}
 			},
 			"required": []
@@ -17542,7 +17450,7 @@ window.jdbToolList = [
 			"properties": {
 				"tab": {
 					"type": "string",
-					"description": "标签页,如若不指定则不切换标签页"
+					"description": "标签页，如若不指定则不切换标签页"
 				}
 			},
 			"required": []
@@ -17556,7 +17464,7 @@ window.jdbToolList = [
 			"properties": {
 				"tab": {
 					"type": "string",
-					"description": "标签页,如若不指定则不切换标签页"
+					"description": "标签页，如若不指定则不切换标签页"
 				}
 			},
 			"required": []
@@ -17570,7 +17478,7 @@ window.jdbToolList = [
 			"properties": {
 				"state": {
 					"type": "boolean",
-					"description": "是否锁定,如若不指定则反置当前状态"
+					"description": "是否锁定，如若不指定则反置当前状态"
 				}
 			},
 			"required": []
@@ -17584,7 +17492,7 @@ window.jdbToolList = [
 			"properties": {
 				"state": {
 					"type": "boolean",
-					"description": "是否锁定,如若不指定则反置当前状态"
+					"description": "是否锁定，如若不指定则反置当前状态"
 				}
 			},
 			"required": []
@@ -17598,7 +17506,7 @@ window.jdbToolList = [
 			"properties": {
 				"state": {
 					"type": "boolean",
-					"description": "是否锁定,如若不指定则反置当前状态"
+					"description": "是否锁定，如若不指定则反置当前状态"
 				}
 			},
 			"required": []
@@ -17635,11 +17543,11 @@ window.jdbToolList = [
 			"properties": {
 				"shortcutKey": {
 					"type": "string",
-					"description": "快捷键,数组中包含多个元素则解析为组合快捷键,将按规则排序后存入缓存"
+					"description": "快捷键，数组中包含多个元素则解析为组合快捷键，将按规则排序后存入缓存"
 				},
 				"title": {
 					"type": "string",
-					"description": "快捷键标题,快捷键的友好名称"
+					"description": "快捷键标题，快捷键的友好名称"
 				},
 				"callbackFn": {
 					"type": "string",
@@ -17669,7 +17577,7 @@ window.jdbToolList = [
 			"properties": {
 				"shortcutKey": {
 					"type": "string",
-					"description": "快捷键,不区分传入的排列顺序,将自动排序并查询匹配的快捷键"
+					"description": "快捷键，不区分传入的排列顺序，将自动排序并查询匹配的快捷键"
 				}
 			},
 			"required": [
@@ -17802,11 +17710,11 @@ window.jdbToolList = [
 			"properties": {
 				"id": {
 					"type": "string",
-					"description": "定时器 ID,用于定位&删除定时器"
+					"description": "定时器 ID，用于定位&删除定时器"
 				},
 				"timeout": {
 					"type": "number",
-					"description": "定时时间,单位 ms"
+					"description": "定时时间，单位 ms"
 				},
 				"callFn": {
 					"type": "string",
@@ -17836,7 +17744,7 @@ window.jdbToolList = [
 				},
 				"timeout": {
 					"type": "number",
-					"description": "定时时间,单位 ms"
+					"description": "定时时间，单位 ms"
 				},
 				"callFn": {
 					"type": "string",
@@ -17870,7 +17778,7 @@ window.jdbToolList = [
 				},
 				"timer": {
 					"type": "number",
-					"description": "自动关闭倒计时秒数,0 为不自动关闭"
+					"description": "自动关闭倒计时秒数，0 为不自动关闭"
 				},
 				"bottomPanel": {
 					"type": "string",
@@ -17882,7 +17790,7 @@ window.jdbToolList = [
 				},
 				"buttonCallbackFn": {
 					"type": "string",
-					"description": "回调函数内容,字符串形式,会被自动解析并执行"
+					"description": "回调函数内容，字符串形式，会被自动解析并执行"
 				}
 			},
 			"required": [
@@ -17898,11 +17806,11 @@ window.jdbToolList = [
 			"properties": {
 				"netlist1": {
 					"type": "string",
-					"description": "网表 1,可以为当前工程内的 PCB 和原理图的 UUID、网表的文件数据"
+					"description": "网表 1，可以为当前工程内的 PCB 和原理图的 UUID、网表的文件数据"
 				},
 				"netlist2": {
 					"type": "string",
-					"description": "网表 2,可以为当前工程内的 PCB 和原理图的 UUID、网表的文件数据"
+					"description": "网表 2，可以为当前工程内的 PCB 和原理图的 UUID、网表的文件数据"
 				}
 			},
 			"required": [
@@ -17922,7 +17830,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_Unit.inchToMil",
-		"description": "单位转换:英寸到密尔",
+		"description": "单位转换：英寸到密尔",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17932,7 +17840,7 @@ window.jdbToolList = [
 				},
 				"numberOfDecimals": {
 					"type": "number",
-					"description": "保留小数位数,默认为 4"
+					"description": "保留小数位数，默认为 4"
 				}
 			},
 			"required": [
@@ -17942,7 +17850,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_Unit.inchToMm",
-		"description": "单位转换:英寸到毫米",
+		"description": "单位转换：英寸到毫米",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17952,7 +17860,7 @@ window.jdbToolList = [
 				},
 				"numberOfDecimals": {
 					"type": "number",
-					"description": "保留小数位数,默认为 4"
+					"description": "保留小数位数，默认为 4"
 				}
 			},
 			"required": [
@@ -17962,7 +17870,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_Unit.milToInch",
-		"description": "单位转换:密尔到英寸",
+		"description": "单位转换：密尔到英寸",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17972,7 +17880,7 @@ window.jdbToolList = [
 				},
 				"numberOfDecimals": {
 					"type": "number",
-					"description": "保留小数位数,默认为 4"
+					"description": "保留小数位数，默认为 4"
 				}
 			},
 			"required": [
@@ -17982,7 +17890,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_Unit.milToMm",
-		"description": "单位转换:密尔到毫米",
+		"description": "单位转换：密尔到毫米",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -17992,7 +17900,7 @@ window.jdbToolList = [
 				},
 				"numberOfDecimals": {
 					"type": "number",
-					"description": "保留小数位数,默认为 4"
+					"description": "保留小数位数，默认为 4"
 				}
 			},
 			"required": [
@@ -18002,7 +17910,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_Unit.mmToInch",
-		"description": "单位转换:毫米到英寸",
+		"description": "单位转换：毫米到英寸",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -18012,7 +17920,7 @@ window.jdbToolList = [
 				},
 				"numberOfDecimals": {
 					"type": "number",
-					"description": "保留小数位数,默认为 4"
+					"description": "保留小数位数，默认为 4"
 				}
 			},
 			"required": [
@@ -18022,7 +17930,7 @@ window.jdbToolList = [
 	},
 	{
 		"name": "sys_Unit.mmToMil",
-		"description": "单位转换:毫米到密尔",
+		"description": "单位转换：毫米到密尔",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -18032,7 +17940,7 @@ window.jdbToolList = [
 				},
 				"numberOfDecimals": {
 					"type": "number",
-					"description": "保留小数位数,默认为 4"
+					"description": "保留小数位数，默认为 4"
 				}
 			},
 			"required": [
@@ -18052,15 +17960,15 @@ window.jdbToolList = [
 				},
 				"code": {
 					"type": "number",
-					"description": "数字状态码,对应 WebSocket.CloseEvent 内允许的状态码"
+					"description": "数字状态码，对应 WebSocket.CloseEvent 内允许的状态码"
 				},
 				"reason": {
 					"type": "string",
-					"description": "一个人类可读的字符串,解释连接关闭的原因"
+					"description": "一个人类可读的字符串，解释连接关闭的原因"
 				},
 				"extensionUuid": {
 					"type": "string",
-					"description": "扩展 UUID,一般不需要指定,仅当需要操作其它扩展建立的 WebSocket 连接时才需要指定为其它扩展的 UUID"
+					"description": "扩展 UUID，一般不需要指定，仅当需要操作其它扩展建立的 WebSocket 连接时才需要指定为其它扩展的 UUID"
 				}
 			},
 			"required": [
@@ -18114,7 +18022,7 @@ window.jdbToolList = [
 				},
 				"extensionUuid": {
 					"type": "string",
-					"description": "扩展 UUID,一般不需要指定,仅当需要操作其它扩展建立的 WebSocket 连接时才需要指定为其它扩展的 UUID"
+					"description": "扩展 UUID，一般不需要指定，仅当需要操作其它扩展建立的 WebSocket 连接时才需要指定为其它扩展的 UUID"
 				}
 			},
 			"required": [
@@ -18131,7 +18039,7 @@ window.jdbToolList = [
 			"properties": {
 				"type": {
 					"type": "string",
-					"description": "事件类型,当前支持 blur focus"
+					"description": "事件类型，当前支持 blur focus"
 				},
 				"listener": {
 					"type": "string",
@@ -19811,7 +19719,7 @@ window.standardCode3 = `
 {"type":"TEXT","ticket":591,"id":"e5068"}||{"x":495,"y":-440,"rotation":0,"color":null,"fontFamily":null,"fontSize":20,"fontWeight":null,"italic":null,"underline":null,"strikeout":null,"align":null,"value":"用户按钮","fillColor":null,"zIndex":246,"locked":false}|
 {"type":"TEXT","ticket":592,"id":"e5258"}||{"x":55,"y":-420,"rotation":0,"color":null,"fontFamily":null,"fontSize":null,"fontWeight":null,"italic":null,"underline":null,"strikeout":null,"align":null,"value":"电源指示灯","fillColor":null,"zIndex":269,"locked":false}|
 {"type":"TEXT","ticket":593,"id":"e5328"}||{"x":220,"y":-420,"rotation":0,"color":null,"fontFamily":null,"fontSize":null,"fontWeight":null,"italic":null,"underline":null,"strikeout":null,"align":null,"value":"用户指示灯","fillColor":null,"zIndex":270,"locked":false}|
-{"type":"TEXT","ticket":594,"id":"e5995"}||{"x":745,"y":-560,"rotation":0,"color":null,"fontFamily":null,"fontSize":20,"fontWeight":null,"italic":null,"underline":null,"strikeout":null,"align":null,"value":"只支持3.3V,不得接入5V","fillColor":null,"zIndex":271,"locked":false}|
+{"type":"TEXT","ticket":594,"id":"e5995"}||{"x":745,"y":-560,"rotation":0,"color":null,"fontFamily":null,"fontSize":20,"fontWeight":null,"italic":null,"underline":null,"strikeout":null,"align":null,"value":"只支持3.3V，不得接入5V","fillColor":null,"zIndex":271,"locked":false}|
 {"type":"TEXT","ticket":595,"id":"e7581"}||{"x":75,"y":-15,"rotation":0,"color":null,"fontFamily":null,"fontSize":30,"fontWeight":null,"italic":null,"underline":null,"strikeout":null,"align":null,"value":"layout时考虑换一个接口","fillColor":null,"zIndex":295,"locked":false}|
 {"type":"TEXT","ticket":596,"id":"e10565"}||{"x":245,"y":-730,"rotation":0,"color":"#9933CC","fontFamily":null,"fontSize":30,"fontWeight":true,"italic":null,"underline":null,"strikeout":null,"align":null,"value":"RGB","fillColor":"#9933CC","zIndex":419,"locked":false}|
 {"type":"RECT","ticket":597,"id":"e7580"}||{"radiusX":0,"radiusY":0,"dotX1":45,"dotX2":385,"dotY1":-380,"dotY2":-10,"strokeColor":null,"strokeStyle":null,"fillColor":null,"strokeWidth":null,"fillStyle":null,"rotation":0,"zIndex":294,"locked":false}|

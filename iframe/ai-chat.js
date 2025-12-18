@@ -22,7 +22,7 @@ let autoExecWriteEnabled = false; // 自动执行开关（默认关闭）
 
 // 对话历史数组,用于维护上下文
 let conversationHistory = []; // 存储所有对话消息,格式: [{role: 'user', content: '...'}, {role: 'assistant', content: '...'}]
-
+let previousResponseId = null; // 上一轮响应的ID（用于多轮对话）
 let isStop = false; // 是否停止
 
 // 界面状态枚举
@@ -38,120 +38,50 @@ let currentUIState = UI_STATE.IDLE; // 当前界面状态
 
 // 系统消息 - 用于描述 AI 角色和职责,用户可以在控制台临时修改系统消息,对ai助手进行定制化
 window.top.systemMessage = `
-你是原理图设计AI助手,运行在嘉立创在线web开发平台的iframe扩展中,通过mcp工具专注于电子电路原理图设计。
+角色:你是兼具10年嘉立创EDA（标准版+专业版）实操经验和原理图业界规范知识的专家。
+精通嘉立创EDA原理图全流程操作,熟悉其快捷键、复用图块、网表对比等特色功能;同时吃透IPC绘图规范、电源与接地等业界电气规则,能解决原理图设计中的操作与合规性双重问题。
 
-**核心职责**:
-- 通过返回代码块方式调用mcp工具集进行原理图设计操作
-- 使用工作流引擎模式执行任务,严格按照规则拆分业务和原子操作
-- 每个原子操作执行前必须获取对应规则,执行后必须验证检查点
-- 确保设计质量符合间距标准、布线规范等要求
+**工作流程规范（必须严格遵循）**:
+你必须按照以下6个步骤执行每个任务:
 
-**工作流引擎模式**:
-你必须使用工作流引擎模式执行所有任务,工作流执行流程如下:
-1. **任务识别**: 分析用户意图,识别任务类型(元件放置/导线布线/查询等)
-2. **工作流查找**: 根据任务类型查找对应工作流定义(参考business_workflow规则)
-3. **规则获取**: 按工作流步骤顺序,每个原子操作执行前必须获取对应规则
-4. **步骤执行**: 严格按照工作流步骤顺序执行,不能跳过任何步骤
-5. **检查点验证**: 每个步骤执行后必须验证检查点,检查点通过才能继续
-6. **完成确认**: 所有检查点通过后确认工作流完成
+1. **需求分析阶段**:
+   - 仔细分析用户的需求,理解用户的真实意图
+   - 识别需求中的关键信息:元件类型、数量、位置、连接关系等
+   - 明确任务的复杂度和涉及的操作类型(布局/布线/修改等)
 
-**强制要求**:
-- 不能跳过任何工作流步骤
-- 不能跳过任何检查点验证
-- 每个原子操作执行前必须获取对应规则
-- 检查点失败必须触发错误恢复流程
+2. **业务流程转换阶段**:
+   - 将用户需求转换为专业的原理图设计流程
+   - 规划操作步骤:先做什么,后做什么
+   - 识别需要遵循的规范(间距标准/布线策略/DRC规则等)
+   - 使用 getWorkflowGuidelines 工具获取工作流程指导(如需要)
 
-**对话角色定义**:
-本对话系统包含三种角色,你需要清楚理解每种角色的作用:
-- **system(扩展自动执行)**: 定义你的角色、职责和工作流程,并自动执行你返回的[代码块],然后将执行结果以system角色消息反馈给你,直到没有返回[代码块]为止(对话结束)。
-- **user(用户消息)**: 用户的问题和需求,以自然语言形式发送给你。
-- **assistant(助手回复)**: 你的回复内容,包括简洁的文本说明和[代码块]。
+3. **数据获取阶段**:
+   - 使用 getCurrentSchematicData 工具获取当前原理图状态(画布大小/元件列表/导线列表)
+   - 使用 getAllGuidelines 工具获取所有相关规范(间距标准/布线策略/DRC规则等)
+   - 确保在操作前了解完整的上下文信息
 
-**重要说明**:
-- 你是运行在浏览器虚拟环境中,不要在本地生成任何文件,不要在回复中提到本地文件
-- 若system反馈的结果太长,会使用文件的形式告诉你,你应该阅读后做出回答,不要在回复中提到该文件
-- 不要在回复中提到请求执行代码的话术,例如:"请将执行结果发给我"、"请执行以下代码"等,system会自动检测并执行
+4. **工具查找阶段**:
+   - 根据业务流程,使用 searchTools 工具查找需要的API
+   - 优先使用自定义工具(如 sch_PrimitiveComponent$create),其次使用原生API
+   - 确认工具的参数和返回值格式
 
-**统一输出格式规范**:
-**格式要求**:
-[描述]
-[代码块]
+5. **逐步执行阶段**:
+   - 按照规划的业务流程,一步步执行操作
+   - 每执行一个操作,检查执行结果
+   - 如果操作失败,分析原因并调整策略
+   - 确保每个操作都符合规范要求
 
-**注意**:
-- 回复使用中文,专业简洁,避免冗余描述
-- 描述内容必须把规则要点进行复述
-- 所有回复必须严格遵循以上固定输出格式,不得出现其他格式
-- 按照回复规范逐步返回,不能一次性返回多个步骤和大量内容
-- 若要调用mcp工具,则必须以[代码块]结尾(可选),若以[代码块]结尾则后面不能再添加任何描述/说明内容了
-- 每次回复的最后只能返回一个[代码块],且必须放在回复的最后
+6. **DRC验证阶段**:
+   - 完成所有操作后,必须执行DRC验证
+   - 获取所有导线和元件状态,检查间距、线宽、角度等
+   - 如果发现违规,必须立即修正,不能仅报告违规
+   - 修正后再次执行DRC验证,直到无违规为止
 
-**强制要求**:
-- 每次回复前必须检查描述内容是否重复/冗余等问题,防止同一个句子出现好几遍的情况
-- 必须严格执行业务流程分析后再回复内容,到底是否需要返回[代码块],还是直接回答问题,查看business_workflow规则
-
-**代码块规范要求**:
-**格式要求**:
-\`\`\`javascript:[read|write]
-[代码内容]
-[返回结构体: { data, errorMessage, stack }]
-\`\`\`
-
-**注意**:
-- [代码块]中只有获取信息的操作时,类型为read,若存在修改原理图的操作,则类型为write
-- 成功时: data 包含执行结果,errorMessage 和 stack 为 null
-- 失败时: errorMessage 包含错误信息,stack 包含错误堆栈,data 为 null
-- 代码块不能共享数据,每个代码块必须独立执行,不能依赖其他代码块的结果
-- 禁止包裹 try...catch 和立即执行的自调用形式,按规范直接编写 await 逻辑即可
-
-**代码块正确与错误示例**:
-**正确示例**:
-\`\`\`javascript:read
-const resp = { data: null, errorMessage: null, stack: null };
-resp.data = await mcpEDA.getPrompt({ name: 'guideline_initialization_prompt' });
-return resp;
-\`\`\`
-
-**正确示例**:
-\`\`\`javascript:write
-const resp = { data: null, errorMessage: null, stack: null };
-const data = await mcpEDA.callTool({ name: 'sch_PrimitiveComponent$create', arguments: {
-uuid: '1234567890', libraryUuid: '1234567890', x: 0, y: 0} });
-resp.data = data;
-return resp;
-\`\`\`
-
-**错误示例**:
-- 错误1: 使用了try...catch包裹
-- 错误2: 使用了立即执行的自调用形式
-- 错误3: 代码块类型错误'callTool',只能是[read/write]
-\`\`\`javascript:callTool
-const resp = { data: null, errorMessage: null, stack: null };
-(async () => {
-try {
-const resp = { data: null, errorMessage: null, stack: null };
-const data = await mcpEDA.callTool({ name: 'sch_PrimitiveComponent$create', arguments: {
-  uuid: '1234567890', libraryUuid: '1234567890', x: 0, y: 0} });
-resp.data = data;
-return resp;
-} catch (err) {
-resp.errorMessage = err?.message || String(err);
-resp.stack = err?.stack || null;
-}
-return resp;
-})();
-\`\`\`
-
-**初始化要求（二次握手流程）**:
-这是一个严格的两步握手流程,必须按顺序执行,不能跳过任何一步。
-
-**第一步（必须执行）**:
-你必须立即获取 guideline_initialization_prompt 的核心规则,这是强制要求,不能跳过
-
-**第二步（仅在收到执行结果后执行）**:
-收到system角色返回的JSON格式执行结果后,你才能执行第二步:回复"已理解系统定义,准备接收用户请求"。
-
-⚠️ **重要**:绝对不能直接执行第二步。必须先执行第一步,等待执行结果返回后,才能执行第二步。
-
+**重要提醒**:
+- 每个任务都必须完整执行这6个步骤,不能跳过任何步骤
+- 在执行操作前,必须先获取当前原理图数据和相关规范
+- 完成操作后,必须执行DRC验证并修正所有违规
+- 如果任务复杂,可以分阶段执行,但每个阶段都要遵循这6个步骤
 `;
 // 初始化函数
 function init() {
@@ -219,7 +149,7 @@ function updateUIState(state) {
 
 	switch (state) {
 		case UI_STATE.IDLE:
-			// 空闲状态：可发送消息、可清空、可配置、停止按钮隐藏
+			// 空闲状态:可发送消息、可清空、可配置、停止按钮隐藏
 			setInputDisabled(false); // 启用输入框和发送按钮
 			stopBtn.style.display = 'none'; // 隐藏停止按钮
 			clearBtn.disabled = false; // 启用清空按钮
@@ -228,7 +158,7 @@ function updateUIState(state) {
 			break;
 
 		case UI_STATE.SENDING:
-			// 发送中：禁用输入/发送/清空、允许配置、显示停止
+			// 发送中:禁用输入/发送/清空、允许配置、显示停止
 			setInputDisabled(true); // 禁用输入框和发送按钮
 			stopBtn.style.display = 'block'; // 显示停止按钮
 			clearBtn.disabled = true; // 禁用清空按钮
@@ -237,7 +167,7 @@ function updateUIState(state) {
 			break;
 
 		case UI_STATE.STOPPED:
-			// 停止中：禁用输入/发送/清空/自动执行复选框、隐藏停止按钮、取消自动执行选中状态
+			// 停止中:禁用输入/发送/清空/自动执行复选框、隐藏停止按钮、取消自动执行选中状态
 			setInputDisabled(true); // 禁用输入框和发送按钮
 			stopBtn.style.display = 'none'; // 隐藏停止按钮
 			clearBtn.disabled = true; // 禁用清空按钮
@@ -248,7 +178,7 @@ function updateUIState(state) {
 			break;
 
 		case UI_STATE.EXECUTING:
-			// 代码执行中：禁用输入/发送/清空、允许配置、显示停止
+			// 代码执行中:禁用输入/发送/清空、允许配置、显示停止
 			setInputDisabled(true); // 禁用输入框和发送按钮
 			stopBtn.style.display = 'block'; // 显示停止按钮
 			clearBtn.disabled = true; // 禁用清空按钮
@@ -304,28 +234,229 @@ function prepareUserMessageUI(message) {
 // ==================== API调用和响应处理相关函数 ====================
 
 /**
- * 解析AI API响应,提取回复内容
- * @param response - API响应对象
- * @returns AI回复内容字符串
+ * 解析工具参数
+ * @param {string|Object} argumentsStr - 工具参数字符串或对象
+ * @returns {Object} 解析后的参数对象
+ */
+function parseToolArguments(argumentsStr) {
+	if (!argumentsStr) {
+		return {}; // 如果没有参数,返回空对象
+	}
+	try {
+		return typeof argumentsStr === 'string'
+			? JSON.parse(argumentsStr) // 如果是字符串,解析JSON
+			: argumentsStr; // 如果已经是对象,直接返回
+	} catch (e) {
+		// 如果解析失败,返回原始值（用于generateCodeFromToolCalls）
+		return argumentsStr; // 返回原始字符串
+	}
+}
+
+/**
+ * 更新上一轮响应ID
+ * @param {string|null} responseId - 响应ID
+ */
+function updatePreviousResponseId(responseId) {
+	if (responseId) {
+		previousResponseId = responseId; // 更新响应ID
+	}
+}
+
+/**
+ * 提取消息内容（从parseAIResponse拆分）
+ * @param {Object} item - 消息项
+ * @returns {string} 消息内容
+ */
+function extractMessageContent(item) {
+	if (item.content && Array.isArray(item.content)) {
+		// content是数组格式
+		return item.content
+			.filter(c => c.type === 'output_text') // 过滤文本类型
+			.map(c => c.text) // 提取文本
+			.join(''); // 拼接文本
+	} else if (typeof item.content === 'string') {
+		// content是字符串格式
+		return item.content; // 直接返回字符串
+	}
+	return ''; // 默认返回空字符串
+}
+
+/**
+ * 提取工具调用（从parseAIResponse拆分）
+ * @param {Object} item - 工具调用项
+ * @returns {Object} 工具调用对象
+ */
+function extractToolCall(item) {
+	return {
+		id: item.call_id || item.id, // 工具调用ID
+		function: {
+			name: item.name, // 函数名称
+			arguments: typeof item.arguments === 'string'
+				? item.arguments
+				: JSON.stringify(item.arguments || {}), // 参数（JSON字符串）
+		},
+	}; // 返回工具调用对象
+}
+
+/**
+ * 解析AI API响应,提取回复内容和工具调用信息
+ * @param response - API响应对象（Responses API格式）
+ * @returns {Object} 包含content和toolCalls的对象
  */
 function parseAIResponse(response) {
 	// 解析 AI 回复
 	let aiResponse = ''; // AI 回复内容
-	if (response && response.choices && response.choices.length > 0) {
-		// 从响应中提取消息内容
-		aiResponse = response.choices[0].message?.content || '抱歉,我没有收到有效的回复.'; // 提取回复内容
+	let toolCalls = null; // 工具调用信息
+	let messageObj = null; // 消息对象
+
+	if (response && response.output && Array.isArray(response.output)) {
+		// Responses API格式:解析output数组
+		const output = response.output; // 获取output数组
+
+		// 查找消息类型的输出
+		for (const item of output) {
+			if (item.type === 'message' && item.role === 'assistant') {
+				// 找到助手消息
+				messageObj = item; // 保存消息对象
+				aiResponse = extractMessageContent(item); // 提取消息内容
+			} else if (item.type === 'function_call') {
+				// 找到工具调用
+				if (!toolCalls) {
+					toolCalls = []; // 初始化工具调用数组
+				}
+				toolCalls.push(extractToolCall(item)); // 提取并添加工具调用
+			}
+		}
+
+		// 如果既没有内容也没有工具调用
+		if (!aiResponse && !toolCalls) {
+			aiResponse = '抱歉,我没有收到有效的回复.'; // 错误提示
+		}
 	} else {
 		// 如果响应格式不正确
 		aiResponse = '抱歉,AI 返回的响应格式不正确.'; // 错误提示
 	}
-	return aiResponse; // 返回AI回复内容
+
+	return {
+		content: aiResponse, // 回复内容
+		toolCalls: toolCalls, // 工具调用信息
+		message: messageObj, // 完整消息对象
+		responseId: response?.id, // 响应ID
+	}; // 返回解析结果
+}
+
+/**
+ * 从工具调用生成代码块内容
+ * @param {Array} toolCalls - 工具调用数组
+ * @returns {string} 代码块内容
+ */
+function generateCodeFromToolCalls(toolCalls) {
+	if (!toolCalls || toolCalls.length === 0) {
+		return ''; // 如果没有工具调用,返回空字符串
+	}
+
+	// 生成代码块,包含所有工具调用
+	let codeLines = ['const resp = { data: null, errorMessage: null, stack: null };']; // 初始化响应对象
+
+	// 遍历所有工具调用
+	for (let i = 0; i < toolCalls.length; i++) {
+		const toolCall = toolCalls[i]; // 获取工具调用
+		const toolName = toolCall.function.name; // 获取工具名称
+		const argumentsObj = parseToolArguments(toolCall.function.arguments); // 使用公共函数解析参数
+
+		// 生成工具调用代码
+		if (toolCalls.length === 1) {
+			// 单个工具调用
+			codeLines.push(`const result = await mcpEDA.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`); // 调用工具
+			codeLines.push('resp.data = result;'); // 设置结果
+		} else {
+			// 多个工具调用
+			codeLines.push(`const result${i} = await mcpEDA.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`); // 调用工具
+			if (i === toolCalls.length - 1) {
+				// 最后一个工具调用,设置结果
+				codeLines.push(`resp.data = [${Array.from({ length: toolCalls.length }, (_, idx) => `result${idx}`).join(', ')}];`); // 设置结果数组
+			}
+		}
+	}
+
+	codeLines.push('return resp;'); // 返回响应
+
+	return codeLines.join('\n'); // 返回代码字符串
+}
+
+/**
+ * 执行单个工具调用（从executeToolCalls拆分）
+ * @param {Object} toolCall - 工具调用对象
+ * @returns {Promise<Object>} 执行结果
+ */
+async function executeSingleToolCall(toolCall) {
+	try {
+		const toolName = toolCall.function.name; // 获取工具名称
+		const argumentsObj = parseToolArguments(toolCall.function.arguments); // 使用公共函数解析参数
+
+		// 如果解析失败（返回的是字符串）,说明参数格式错误
+		if (typeof argumentsObj === 'string') {
+			return {
+				tool_call_id: toolCall.id, // 工具调用ID
+				content: `参数解析失败: 参数格式不正确`, // 错误信息
+				isError: true, // 标记为错误
+			};
+		}
+
+		// 调用MCP工具
+		const result = await window.mcpEDA.callTool({
+			name: toolName, // 工具名称
+			arguments: argumentsObj, // 工具参数
+		});
+
+		// 格式化返回结果
+		if (result.isError) {
+			// 如果工具执行出错
+			return {
+				tool_call_id: toolCall.id, // 工具调用ID
+				content: result.content?.[0]?.text || '工具执行失败', // 错误信息
+				isError: true, // 标记为错误
+			};
+		} else {
+			// 工具执行成功
+			const content = result.content?.[0]?.text || JSON.stringify(result); // 提取文本内容
+			return {
+				tool_call_id: toolCall.id, // 工具调用ID
+				content: content, // 返回内容
+				isError: false, // 标记为成功
+			};
+		}
+	} catch (error) {
+		// 捕获执行错误
+		return {
+			tool_call_id: toolCall.id, // 工具调用ID
+			content: `工具执行异常: ${error.message}`, // 错误信息
+			isError: true, // 标记为错误
+		};
+	}
+}
+
+/**
+ * 执行工具调用并返回结果
+ * @param {Array} toolCalls - 工具调用数组
+ * @returns {Promise<Object>} 执行结果
+ */
+async function executeToolCalls(toolCalls) {
+	const results = []; // 初始化结果数组
+
+	// 遍历所有工具调用
+	for (const toolCall of toolCalls) {
+		const result = await executeSingleToolCall(toolCall); // 执行单个工具调用
+		results.push(result); // 添加到结果数组
+	}
+
+	return results; // 返回所有工具执行结果
 }
 
 /**
  * 调用AI API并处理响应
  * 包括调用API、解析响应、添加AI回复到界面和历史
  * @param loadingId - 加载指示器ID
- * @returns AI回复内容字符串
  */
 async function callAIAndHandleResponse(loadingId) {
 	// 如果停止状态为true,直接返回
@@ -334,33 +465,240 @@ async function callAIAndHandleResponse(loadingId) {
 		return; // 直接返回
 	}
 
-	// 确保系统消息在对话历史中（如果不存在则添加并执行预对话）
-	await ensureSystemMessage(); // 确保系统消息存在（异步等待）
+	// 确保系统消息在对话历史中
+	const isAddTool=ensureSystemMessage(); // 确保系统消息存在
 
-	// 精简对话历史,只保留最近的消息（系统消息始终保留）
-	const trimmedHistory = trimHistoryForAPI(conversationHistory); // 精简历史用于 API 调用
-
-	// 调用 AI API,传入对话历史以保持上下文
-	const response = await window.ArkAPI.callArkChat(trimmedHistory); // 调用 ARK API,传入对话历史
-
-	// 移除加载指示器
-	removeLoadingIndicator(loadingId); // 移除加载动画
+	// 调用 AI API（使用Responses API,传入previous_response_id进行多轮对话）
+	const response = await window.ArkAPI.callArkChat(conversationHistory, previousResponseId, 
+		isAddTool ? window.mcpEDA.toolDescriptions : null); // 调用 ARK API
 
 	// 解析 AI 回复
-	const aiResponse = parseAIResponse(response); // 解析响应
+	const parsedResponse = parseAIResponse(response); // 解析响应
 
-	// 添加 AI 回复到界面
-	const error = addMessageToChat('assistant', aiResponse); // 添加 AI 回复
+	// 更新上一轮响应ID（使用公共函数）
+	updatePreviousResponseId(parsedResponse.responseId); // 更新响应ID
 
-	// 将 AI 回复添加到对话历史
-	addAssistantMessageToHistory(aiResponse); // 添加到对话历史
+	// 获取消息对象
+	const message = parsedResponse.message; // 获取消息对象
 
-	if (error) {
-		// 如果添加AI回复时出现错误,则显示错误并要求重新回答
-		addMessageToChat('system', error.message, true); // 显示错误
-		continueConversationWithResult({ data: null, errorMessage: error.message, stack: error.stack });
+	// 如果有内容,添加到界面和历史
+	if (parsedResponse.content) {
+		// 移除加载指示器
+		removeLoadingIndicator(loadingId); // 移除加载动画
+
+		// 添加 AI 回复到界面
+		addMessageToChat('assistant', parsedResponse.content); // 添加 AI 回复
+
+		// 将 AI 回复添加到对话历史（用于本地记录）
+		addAssistantMessageToHistory(parsedResponse.content); // 添加到对话历史
 	}
 
+	// 检查是否有工具调用
+	if (parsedResponse.toolCalls && parsedResponse.toolCalls.length > 0) {
+		// 如果有工具调用,生成代码块并等待用户确认
+		// 生成代码块内容
+		const codeContent = generateCodeFromToolCalls(parsedResponse.toolCalls); // 生成代码
+
+		// 创建代码块展示（等待用户确认）
+		createToolCallCodeBlock(codeContent, parsedResponse.toolCalls, message || {}, loadingId); // 创建代码块
+	} else {
+		// 如果没有工具调用,说明模型已经完成回复
+		// 将助手消息添加到对话历史（用于本地记录,统一使用函数）
+		if (parsedResponse.content) {
+			addAssistantMessageToHistory(parsedResponse.content); // 使用统一函数添加到历史
+		}
+
+		// 移除加载指示器（如果还在显示）
+		removeLoadingIndicator(loadingId); // 移除加载动画
+	}
+
+}
+
+
+/**
+ * 创建工具调用代码块（等待用户确认执行）
+ * @param {string} codeContent - 代码内容
+ * @param {Array} toolCalls - 工具调用数组
+ * @param {Object} message - 消息对象
+ * @param {string|null} loadingId - 加载指示器ID（可选,如果提供则在创建代码块后移除）
+ */
+function createToolCallCodeBlock(codeContent, toolCalls, message, loadingId = null) {
+	// 创建代码容器
+	const codeContainer = document.createElement('div'); // 创建代码容器
+	codeContainer.className = 'code-block-container'; // 设置代码容器类名
+
+	// 创建代码块
+	const codeBlock = document.createElement('pre'); // 创建代码块元素
+	codeBlock.className = 'code-block'; // 设置代码块类名
+	const codeElement = document.createElement('code'); // 创建代码元素
+	codeElement.textContent = codeContent; // 设置代码内容
+	codeBlock.appendChild(codeElement); // 将代码元素添加到代码块
+
+	// 创建操作按钮容器
+	const actionContainer = document.createElement('div'); // 创建操作容器
+	actionContainer.className = 'code-action-container'; // 设置操作容器类名
+
+	// 创建确认执行按钮（统一按钮,不再区分read/write）
+	const confirmBtn = document.createElement('button'); // 创建确认按钮
+	confirmBtn.className = 'code-confirm-btn'; // 设置确认按钮类名
+	confirmBtn.textContent = '确认执行'; // 设置按钮文本
+	confirmBtn.onclick = async () => {
+		// 点击事件
+		await executeToolCallsAndContinue(toolCalls, codeContainer, confirmBtn, message); // 执行工具调用并继续对话
+	}; // 设置点击事件
+
+	actionContainer.appendChild(confirmBtn); // 将确认按钮添加到操作容器
+	codeContainer.appendChild(codeBlock); // 将代码块添加到代码容器
+	codeContainer.appendChild(actionContainer); // 将操作容器添加到代码容器
+
+	// 添加到消息容器
+	const messageDiv = document.createElement('div'); // 创建消息容器
+	messageDiv.className = 'message assistant'; // 设置消息类名
+	const contentDiv = document.createElement('div'); // 创建内容容器
+	contentDiv.className = 'message-content'; // 设置内容类名
+	contentDiv.appendChild(codeContainer); // 将代码容器添加到内容容器
+	messageDiv.appendChild(contentDiv); // 将内容添加到消息容器
+	messagesContainer.appendChild(messageDiv); // 将消息添加到消息容器
+
+	// 如果提供了加载指示器ID,立即移除加载指示器
+	if (loadingId) {
+		removeLoadingIndicator(loadingId); // 移除加载动画
+	}
+
+	scrollToBottom(); // 滚动到消息底部
+
+	// 如果开启自动执行,5 秒后自动触发执行
+	if (autoExecWriteEnabled) {
+		setTimeout(() => {
+			// 延迟执行
+			if (!confirmBtn.disabled) {
+				// 未被禁用才执行
+				confirmBtn.click(); // 自动点击执行
+			}
+		}, 5000); // 5 秒延迟
+	}
+}
+
+/**
+ * 处理工具执行结果
+ * @param {Array} toolResults - 工具执行结果数组
+ * @param {Object} codeContainer - 代码容器DOM元素
+ * @param {Object} button - 执行按钮DOM元素
+ * @param {Object} message - 消息对象
+ * @returns {Array} 工具输入消息数组（用于Responses API）
+ */
+function handleToolExecutionResults(toolResults, codeContainer, button, message) {
+	// 格式化并显示执行结果
+	let allResults = []; // 初始化结果数组
+	for (const result of toolResults) {
+		const resultText = result.isError ? `❌ 错误: ${result.content}` : `执行完成: ${result.content}`; // 格式化结果
+		allResults.push(resultText); // 添加到结果数组
+	}
+
+	// 显示执行结果
+	const resultDiv = document.createElement('div'); // 创建结果容器
+	resultDiv.className = 'code-result'; // 设置结果类名
+	resultDiv.textContent = allResults.join('\n'); // 设置结果内容
+	codeContainer.appendChild(resultDiv); // 将结果添加到代码容器
+
+	// 更新按钮文本
+	button.textContent = '已执行'; // 更新按钮文本
+
+	// 将助手消息添加到对话历史（用于本地记录）
+	if (message) {
+		conversationHistory.push(message); // 添加到历史
+	}
+
+	// 准备工具执行结果消息（用于Responses API）
+	// 根据Responses API文档,工具执行结果应该作为input的一部分传入
+	const toolInputMessages = []; // 初始化工具输入消息数组
+	for (const result of toolResults) {
+		// 添加工具调用输出（符合Responses API格式）
+		toolInputMessages.push({
+			type: 'function_call_output', // 工具调用输出类型
+			call_id: result.tool_call_id, // 工具调用ID
+			output: result.content, // 工具执行结果内容
+		}); // 添加到工具输入消息数组
+		// 同时添加到本地对话历史（用于记录）
+		conversationHistory.push({
+			role: 'tool', // 角色为tool
+			tool_call_id: result.tool_call_id, // 工具调用ID
+			content: result.content, // 工具执行结果内容
+		}); // 添加到历史
+	}
+
+	return toolInputMessages; // 返回工具输入消息数组
+}
+
+/**
+ * 工具执行后继续对话
+ * @param {Array} toolInputMessages - 工具输入消息数组
+ */
+async function continueConversationAfterTools(toolInputMessages) {
+	// 继续调用模型获取最终回复（使用Responses API）
+	const loadingId = addLoadingIndicator(); // 添加加载指示器
+	updateUIState(UI_STATE.EXECUTING); // 切换到代码执行中状态
+	updateStatus('AI 正在处理结果...', 'info'); // 更新状态提示
+
+	// 调用Responses API,传入工具执行结果和previous_response_id
+	const response = await window.ArkAPI.callArkChat(
+		toolInputMessages, // 工具执行结果（作为input传入）
+		previousResponseId // 上一轮响应ID
+	); // 调用 ARK API
+
+	// 解析响应
+	const parsedResponse = parseAIResponse(response); // 解析响应
+	const responseMessage = parsedResponse.message; // 获取消息对象
+
+	// 更新上一轮响应ID（使用公共函数）
+	updatePreviousResponseId(parsedResponse.responseId); // 更新响应ID
+
+	// 如果有内容,添加到界面
+	if (parsedResponse.content) {
+		addMessageToChat('assistant', parsedResponse.content); // 添加 AI 回复
+		// 添加到本地历史（统一使用函数）
+		addAssistantMessageToHistory(parsedResponse.content); // 使用统一函数添加到历史
+	}
+
+	// 检查是否还有工具调用
+	if (parsedResponse.toolCalls && parsedResponse.toolCalls.length > 0) {
+		// 如果有工具调用,生成代码块并等待用户确认
+		const codeContent = generateCodeFromToolCalls(parsedResponse.toolCalls); // 生成代码
+		createToolCallCodeBlock(codeContent, parsedResponse.toolCalls, responseMessage, loadingId); // 创建代码块
+	} else {
+		// 如果没有工具调用,完成
+		removeLoadingIndicator(loadingId); // 移除加载动画
+		if (!parsedResponse.content) {
+			addMessageToChat('assistant', '操作已完成'); // 添加完成提示
+		}
+	}
+
+	// 恢复状态
+	updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
+	updateStatus('', ''); // 清空状态提示
+	messageInput.focus(); // 聚焦输入框
+}
+
+/**
+ * 执行工具调用并继续对话
+ * @param {Array} toolCalls - 工具调用数组
+ * @param {Object} codeContainer - 代码容器DOM元素
+ * @param {Object} button - 执行按钮DOM元素
+ * @param {Object} message - 消息对象
+ */
+async function executeToolCallsAndContinue(toolCalls, codeContainer, button, message) {
+	// 禁用按钮并更新文本
+	button.disabled = true; // 禁用按钮
+	button.textContent = '执行中...'; // 更新按钮文本
+
+	// 执行工具调用
+	const toolResults = await executeToolCalls(toolCalls); // 执行工具调用
+
+	// 处理工具执行结果
+	const toolInputMessages = handleToolExecutionResults(toolResults, codeContainer, button, message); // 处理结果并获取工具输入消息
+
+	// 继续对话
+	await continueConversationAfterTools(toolInputMessages); // 继续对话
 }
 
 /**
@@ -387,104 +725,6 @@ function handleAIError(error, loadingId = null, errorPrefix = 'AI 请求失败')
 	// scrollToBottom(); // 滚动到消息底部
 }
 
-// ==================== 代码执行相关函数 ====================
-
-/**
- * 执行代码并继续对话
- * 统一处理代码执行、结果展示、继续对话的流程
- * @param code - 要执行的代码
- * @param codeContainer - 代码容器DOM元素
- * @param button - 执行按钮DOM元素
- */
-async function executeCodeAndContinue(code, codeContainer, button) {
-	// 禁用按钮并更新文本
-	button.disabled = true; // 禁用按钮
-	button.textContent = '执行中...'; // 更新按钮文本
-
-	// 执行代码
-	const result = await executeCode(code); // 执行代码
-	const resultText = formatExecutionResult(result); // 格式化结果
-
-	// 显示执行结果
-	const resultDiv = document.createElement('div'); // 创建结果容器
-	resultDiv.className = 'code-result'; // 设置结果类名
-	resultDiv.textContent = resultText; // 设置结果内容
-	codeContainer.appendChild(resultDiv); // 将结果添加到代码容器
-
-	// 更新按钮文本
-	button.textContent = '已执行'; // 更新按钮文本
-
-	// 将执行结果发送给 AI,继续对话（自动循环）
-	await continueConversationWithResult(result); // 继续对话
-
-	// 滚动到底部
-	// scrollToBottom(); // 滚动到消息底部
-}
-
-
-/**
- * 创建read类型代码块的执行按钮
- * @param fragment - 代码片段对象
- * @param codeContainer - 代码容器DOM元素
- * @param actionContainer - 操作按钮容器DOM元素
- */
-function createReadCodeButton(fragment, codeContainer, actionContainer) {
-	// 如果是读取操作,自动执行
-	const executeBtn = document.createElement('button'); // 创建执行按钮
-	executeBtn.className = 'code-execute-btn'; // 设置执行按钮类名
-	executeBtn.textContent = '执行代码'; // 设置按钮文本
-	executeBtn.onclick = async () => {
-		// 点击事件
-		await executeCodeAndContinue(fragment.content, codeContainer, executeBtn); // 执行代码并继续对话
-	}; // 设置点击事件
-
-	actionContainer.appendChild(executeBtn); // 将执行按钮添加到操作容器
-
-	// 自动执行（延迟一点,让界面先渲染）
-	setTimeout(() => {
-		executeBtn.click(); // 自动点击执行按钮
-	}, 5000); // 延迟 5 秒
-}
-
-/**
- * 创建write类型代码块的确认按钮
- * @param fragment - 代码片段对象
- * @param codeContainer - 代码容器DOM元素
- * @param actionContainer - 操作按钮容器DOM元素
- */
-function createWriteCodeButton(fragment, codeContainer, actionContainer) {
-	// 如果是写入操作,需要确认
-	const confirmBtn = document.createElement('button'); // 创建确认按钮
-	confirmBtn.className = 'code-confirm-btn'; // 设置确认按钮类名
-	confirmBtn.textContent = '确认执行'; // 设置按钮文本
-	confirmBtn.onclick = async () => {
-		// 点击事件
-		// if (!autoExecWriteEnabled) {
-		// 	// 如果未开启自动执行
-		// 	const confirmed = confirm('确定要执行此代码吗？此操作可能会修改原理图.'); // 显示确认对话框
-		// 	if (!confirmed) {
-		// 		// 如果用户取消
-		// 		return; // 直接返回
-		// 	}
-		// }
-		await executeCodeAndContinue(fragment.content, codeContainer, confirmBtn); // 执行代码并继续对话
-	}; // 设置点击事件
-
-	actionContainer.appendChild(confirmBtn); // 将确认按钮添加到操作容器
-	scrollToBottom(); // 有代码块执行,所以滚动到消息底部
-
-	// 如果开启自动执行,5 秒后自动触发执行
-	if (autoExecWriteEnabled) {
-		setTimeout(() => {
-			// 延迟执行
-			if (!confirmBtn.disabled) {
-				// 未被禁用才执行
-				confirmBtn.click(); // 自动点击执行
-			}
-		}, 5000); // 5 秒延迟
-	}
-
-}
 
 
 /**
@@ -540,156 +780,6 @@ function setInputDisabled(disabled) {
 
 }
 
-/**
- * 解析消息内容,提取代码块
- * @param content - 消息内容
- * @returns 解析后的内容片段数组
- */
-function parseMessageContent(content) {
-	const fragments = []; // 内容片段数组
-	let lastIndex = 0; // 上次匹配的位置
-
-	// 匹配代码块:```javascript:read 或 ```javascript:write 或 ```javascript
-	const codeBlockRegex = /```(javascript|js):?(read|write)?\n([\s\S]*?)```/g; // 代码块正则表达式
-	let match; // 匹配结果
-
-	// 遍历所有匹配的代码块
-	while ((match = codeBlockRegex.exec(content)) !== null) {
-		// 添加代码块之前的文本
-		if (match.index > lastIndex) {
-			// 如果有文本内容
-			const text = content.substring(lastIndex, match.index); // 提取文本
-			if (text.trim()) {
-				// 如果文本不为空
-				fragments.push({ type: 'text', content: text }); // 添加文本片段
-			}
-		}
-
-		// 添加代码块
-		const codeType = match[2] || 'read'; // 代码类型（read 或 write,默认为 read）
-		const code = match[3].trim(); // 代码内容
-		fragments.push({ type: 'code', content: code, codeType: codeType }); // 添加代码片段
-
-		lastIndex = match.index + match[0].length; // 更新上次匹配位置
-	}
-
-	// 添加剩余的文本
-	if (lastIndex < content.length) {
-		// 如果还有剩余文本
-		const text = content.substring(lastIndex); // 提取剩余文本
-		if (text.trim()) {
-			// 如果文本不为空
-			fragments.push({ type: 'text', content: text }); // 添加文本片段
-		}
-	}
-
-	// 如果没有匹配到代码块,返回原始文本
-	if (fragments.length === 0) {
-		fragments.push({ type: 'text', content: content }); // 添加原始文本
-	}
-
-	return fragments; // 返回内容片段数组
-}
-
-/**
- * 执行代码并返回结果
- * @param code - 要执行的代码
- * @returns 执行结果,格式为包含 data、errorMessage、stack 属性的对象
- */
-async function executeCode(code) {
-
-	// 将代码包装在异步函数中执行
-	// 注意:使用 eval 是为了执行动态代码,这是必要的功能
-	const wrappedCode = `
-			(async function() {
-				try {
-					${code};
-				} catch (error) {
-					return { data: null, errorMessage: error.message, stack: error.stack };
-				}
-			})()
-		`; // 包装代码
-
-	// 执行代码
-	// eslint-disable-next-line no-eval
-	const result = await eval(wrappedCode); // 执行代码
-
-	console.log('代码执行结果:', result);
-
-	return result; // 返回结果
-}
-
-/**
- * 格式化执行结果为文本
- * @param result - 执行结果,格式为包含 data、errorMessage、stack 属性的对象
- * @returns 格式化后的文本
- */
-function formatExecutionResult(result) {
-	if (result === undefined || result === null || (result.data === null && result.errorMessage === null && result.stack === null)) {
-		return '执行完成（无返回值）'; // 无返回值
-	} else if (typeof result === 'string') {
-		return result; // 字符串直接返回
-	} else if (result.errorMessage || result.stack) {
-		return `❌ 执行错误:${result.errorMessage}\n${result.stack || ''}`; // 错误信息
-	} else {
-		return `执行完成,结果为: ${JSON.stringify(result.data)}`;
-	}
-}
-
-/**
- * 创建文本片段DOM元素
- * @param fragment - 文本片段对象
- * @param contentDiv - 内容容器DOM元素
- */
-function createTextFragment(fragment, contentDiv) {
-	// 如果是文本片段
-	const textDiv = document.createElement('div'); // 创建文本容器
-	textDiv.className = 'message-text'; // 设置文本类名
-	textDiv.textContent = fragment.content; // 设置文本内容
-	contentDiv.appendChild(textDiv); // 添加到内容容器
-}
-
-/**
- * 创建代码片段DOM元素
- * @param fragment - 代码片段对象
- * @param contentDiv - 内容容器DOM元素
- */
-function createCodeFragment(fragment, contentDiv) {
-	// 如果是代码片段
-	const codeContainer = document.createElement('div'); // 创建代码容器
-	codeContainer.className = 'code-block-container'; // 设置代码容器类名
-
-	// 创建代码块
-	const codeBlock = document.createElement('pre'); // 创建代码块元素
-	codeBlock.className = 'code-block'; // 设置代码块类名
-	const codeElement = document.createElement('code'); // 创建代码元素
-	codeElement.textContent = fragment.content; // 设置代码内容
-	codeBlock.appendChild(codeElement); // 将代码元素添加到代码块
-
-	// 创建操作按钮容器
-	const actionContainer = document.createElement('div'); // 创建操作容器
-	actionContainer.className = 'code-action-container'; // 设置操作容器类名
-
-	// 根据代码类型创建对应的按钮
-	if (fragment.codeType === 'read') {
-		// 如果是读取操作
-		createReadCodeButton(fragment, codeContainer, actionContainer); // 创建read类型按钮
-	} else if (fragment.codeType === 'write') {
-		// 如果是写入操作
-		createWriteCodeButton(fragment, codeContainer, actionContainer); // 创建write类型按钮
-	} else {
-		scrollToBottom(); // 没有代码块执行,滚动到消息底部,并且结束对话
-	}
-
-	// 自动执行总是滚动到消息底部
-	if (autoExecWriteEnabled) {
-		scrollToBottom(); // 滚动到消息底部
-	}
-
-	codeContainer.appendChild(codeBlock); // 将代码块添加到代码容器
-	codeContainer.appendChild(actionContainer); // 将操作容器添加到代码容器
-	contentDiv.appendChild(codeContainer); // 将代码容器添加到内容容器
-}
 
 /**
  * 添加消息到对话界面
@@ -717,41 +807,18 @@ function addMessageToChat(role, content, isError = false) {
 		contentDiv.style.border = '1px solid #fcc'; // 设置错误边框
 	}
 
-	// 解析消息内容（提取代码块）
-	const fragments = parseMessageContent(content); // 解析内容
-	const codeFragments = fragments.filter((fragment) => fragment.type === 'code'); // 统计代码片段
-	let error = null;
-	if (codeFragments.length > 1) { // 多于一个代码块则视为异常
-		console.error('检测到多个代码块，已中止渲染'); // 记录错误日志
-		error = new Error('❌ 错误:每次回答只能返回单个代码块,请重新回答');
-	} else if (codeFragments.length > 0 && fragments[fragments.length - 1].type === 'text'
-		&& fragments[fragments.length - 1].content.trim().length > 20) {
-		error = new Error('❌ 错误:每次回答只能以代码块结尾,请重新回答');
-	} else {
-		if ('assistant' == role && codeFragments.length == 0) {
-			// ai 没有代码块说明自动流程结束
-			updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
-			messageInput.focus(); // 聚焦输入框
-		}
-		// 遍历内容片段,创建对应的 DOM 元素
-		fragments.forEach((fragment) => {
-			if (fragment.type === 'text') {
-				// 如果是文本片段
-				createTextFragment(fragment, contentDiv); // 创建文本片段
-			} else if (fragment.type === 'code') {
-				// 如果是代码片段
-				createCodeFragment(fragment, contentDiv); // 创建代码片段
-			}
-		}); // 遍历内容片段
+	// 直接显示文本内容（不再解析代码块,因为现在使用Function Calling）
+	const textDiv = document.createElement('div'); // 创建文本容器
+	textDiv.className = 'message-text'; // 设置文本类名
+	textDiv.textContent = content; // 设置文本内容
+	contentDiv.appendChild(textDiv); // 添加到内容容器
 
-		// 组装消息元素
-		messageDiv.appendChild(contentDiv); // 将内容添加到消息容器
-		messagesContainer.appendChild(messageDiv); // 将消息添加到消息容器
-	}
+	// 组装消息元素
+	messageDiv.appendChild(contentDiv); // 将内容添加到消息容器
+	messagesContainer.appendChild(messageDiv); // 将消息添加到消息容器
 
 	// 滚动到底部
 	// scrollToBottom(); // 滚动到消息底部
-	return error; // 返回错误
 }
 
 /**
@@ -802,122 +869,33 @@ function removeLoadingIndicator(loadingId) {
 
 
 /**
- * 确保系统消息在对话历史中,如果没有系统消息则执行预对话流程
- * 预对话流程包括:发送系统消息->接收命令->发送执行结果->收到指定确认消息
- * 此流程静默执行,不在界面上显示
- * 如果检测到错误,会将错误信息返回给 AI 进行重新握手,最多重试 3 次
- * @returns 如果预对话失败则抛出错误
+ * 确保系统消息在对话历史中
+ * 如果没有系统消息则添加到对话历史开头
  */
-async function ensureSystemMessage() {
+function ensureSystemMessage() {
 	// 检查对话历史中是否已有系统消息
 	const hasSystemMessage = conversationHistory.some((msg) => msg.role === 'system'); // 检查是否有系统消息
-
-	// 如果没有系统消息,执行预对话流程
-	if (!hasSystemMessage) {
-		const history = conversationHistory.slice(); // 备份对话历史,用于恢复
-		conversationHistory = [{ // 清空对话历史,只保留系统消息
-			role: 'system', // 系统消息角色
-			content: window.top.systemMessage
-		}];
-
-		const maxRetries = 3; // 最大重试次数
-		let retryCount = 0; // 当前重试次数
-		let initialized = false; // 是否初始化成功
-
-		// 循环执行握手流程,直到成功或达到最大重试次数
-		while (!initialized && retryCount < maxRetries) {
-			try {
-				// 第一步:静默调用 API 发送系统消息,获取首次响应
-				const firstResponse = await window.ArkAPI.callArkChat(conversationHistory); // 调用 ARK API,传入系统消息
-				const firstAiResponse = parseAIResponse(firstResponse); // 解析响应
-
-				// 将首次响应添加到对话历史（静默,不显示在界面）
-				addAssistantMessageToHistory(firstAiResponse); // 添加到对话历史
-
-				// 第二步:解析响应,提取代码块
-				const fragments = parseMessageContent(firstAiResponse); // 解析内容
-				const codeFragments = fragments.filter((fragment) => fragment.type === 'code'); // 提取代码片段
-
-				// 检查响应格式是否正确
-				let error = null;
-				if (codeFragments.length > 1) { // 多于一个代码块则视为异常
-					error = new Error('❌ 错误:每次回答只能返回单个代码块,请重新回答');
-				} else if (codeFragments.length > 0 && fragments[fragments.length - 1].type === 'text'
-					&& fragments[fragments.length - 1].content.trim().length > 20) {
-					error = new Error('❌ 错误:每次回答只能以代码块结尾,请重新回答');
-				} else if (codeFragments.length === 0) {
-					error = new Error('❌ 错误:初始化流程要求返回代码块,请重新回答');
-				}
-
-				// 如果检测到格式错误,将错误信息发送给 AI 进行重新握手
-				if (error) {
-					console.warn(`答复错误,重新握手 (重试 ${retryCount + 1}/${maxRetries}):`, error.message); // 记录警告日志
-					// 将错误信息作为 system 消息发送给 AI,让 AI 重新响应
-					conversationHistory.push({
-						role: 'system', // 系统角色（作为错误反馈）
-						content: error.message, // 错误消息内容
-					}); // 添加到对话历史
-					retryCount++; // 增加重试次数
-					continue; // 继续下一次循环,让 AI 重新响应
-				}
-
-				// 第三步:静默执行代码（不显示在界面）
-				const code = codeFragments[0].content; // 获取第一个代码块内容
-				const executionResult = await executeCode(code); // 执行代码
-
-				// 检查代码执行结果（修复:使用 errorMessage 而不是 isError）
-				if (executionResult && executionResult.errorMessage) {
-					// 代码执行失败,将错误信息发送给 AI 进行重新握手
-					const execError = new Error(`❌ 第一步握手代码执行失败,请重新执行:${executionResult.errorMessage}`);
-					console.warn(`答复错误,重新握手 (重试 ${retryCount + 1}/${maxRetries}):`, execError.message); // 记录警告日志
-					// 将错误信息作为 system 消息发送给 AI,让 AI 重新响应
-					conversationHistory.push({
-						role: 'system', // 系统角色（作为错误反馈）
-						content: execError.message, // 错误消息内容
-					}); // 添加到对话历史
-					retryCount++; // 增加重试次数
-					continue; // 继续下一次循环,让 AI 重新响应
-				}
-
-				// 第四步:静默发送执行结果给 AI
-				conversationHistory.push({
-					role: 'system', // 系统角色（作为执行结果的反馈）
-					content: `这是第一步握手返回的数据,请阅读后执行第二步握手:${JSON.stringify(executionResult)}`, // 结果消息内容
-				}); // 添加到对话历史
-
-				// 调用 API 获取确认响应
-				const confirmResponse = await window.ArkAPI.callArkChat(conversationHistory); // 调用 ARK API
-				const confirmAiResponse = parseAIResponse(confirmResponse); // 解析响应
-
-				// 将确认响应添加到对话历史（静默,不显示在界面）
-				addAssistantMessageToHistory(confirmAiResponse); // 添加到对话历史
-
-				// 第五步:检查响应是否包含"已理解系统定义,准备接收用户请求"
-				if (!(confirmAiResponse.includes('已理解系统定义') && confirmAiResponse.includes('准备接收用户请求'))) {
-					// 未收到预期的确认消息,直接抛出错误,不进行重试
-					const confirmError = new Error('初始化失败:未收到预期的确认消息,请回复"已理解系统定义,准备接收用户请求"');
-					console.error('初始化握手失败:', confirmError.message); // 记录错误日志
-					throw confirmError; // 直接抛出错误,不重试
-				}
-
-				// 初始化成功
-				initialized = true; // 标记为已初始化
-				console.log('初始化成功,系统已准备好接收用户请求'); // 输出日志
-
-			} catch (apiError) {
-				// 直接抛出,不重试
-				throw apiError; // 直接抛出错误
-			}
-		}
-
-		// 如果达到最大重试次数仍未成功,抛出错误
-		if (!initialized) {
-			throw new Error(`初始化失败:经过 ${maxRetries} 次重试后仍然失败,请检查系统消息配置或网络连接`);
-		}
-
-		// 第六步:恢复对话历史
-		conversationHistory.push(...history); // 恢复原始对话历史
+	if (hasSystemMessage) {
+		return false; // 如果已有系统消息,直接返回
 	}
+
+	conversationHistory[0].role = 'system';
+	conversationHistory[0].content = window.top.systemMessage + conversationHistory[0].content;
+
+	// 如果没有系统消息,说明是首次提问,需要定义ai能力,并设置tools
+	// window.ArkAPI.callArkChat([{ 
+	// 	role: 'system', // 系统角色
+	// 	content: window.top.systemMessage, // 系统消息内容
+	// 	type: 'message', // 消息类型
+	// }], previousResponseId, window.mcpEDA.toolDescriptions);
+	// // 添加到对话历史开头
+	// conversationHistory.unshift({ 
+	// 	role: 'system', // 系统角色
+	// 	content: window.top.systemMessage, // 系统消息内容
+	// 	type: 'message', // 消息类型
+	// }); // 添加到历史开头
+	console.log('已添加系统消息到对话历史'); // 输出日志
+	return true;
 }
 
 
@@ -954,57 +932,12 @@ async function runSendFlow({
 	} catch (error) {
 		handleAIError(error, loadingId, errorPrefix); // 统一错误处理
 	} finally {
-		// updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
-		// messageInput.focus(); // 聚焦输入框
+		updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
+		messageInput.focus(); // 聚焦输入框
 	}
 }
 
-/**
- * 继续对话,将代码执行结果发送给 AI
- * 根据系统消息要求,执行代码后需要将结果发送给 AI,让 AI 继续处理,直到没有返回代码为止
- * @param result - 代码执行结果,格式为包含 data、errorMessage、stack 属性的对象
- */
-async function continueConversationWithResult(result) {
-	await runSendFlow({
-		uiState: UI_STATE.EXECUTING, // 切换到代码执行中状态
-		statusText: 'AI 正在处理结果...', // 状态提示
-		beforeSend: () => { }, // 无需额外 UI 处理
-		appendHistory: () => {
-			conversationHistory.push({
-				role: 'system', // 系统角色（作为执行结果的反馈）
-				content: JSON.stringify(result), // 结果消息内容
-			}); // 添加到对话历史
-		}, // 写入历史
-		errorPrefix: '继续对话失败', // 错误前缀
-		needScroll: false, // 继续对话不强制滚动
-	}); // 运行统一流程
-}
 
-/**
- * 精简历史用于 API 调用
- * 返回精简后的历史数组,确保不超过最大消息数量限制
- * 系统消息始终保留在开头
- * @param history - 原始对话历史数组
- * @returns 精简后的对话历史数组
- */
-function trimHistoryForAPI(history) {
-	// 如果历史消息数量未超过限制,直接返回
-	// if (history.length <= MAX_HISTORY_MESSAGES) {
-	return history; // 直接返回原始历史
-	// }
-
-	// // 分离系统消息和普通消息
-	// const systemMessages = history.filter((msg) => msg.role === 'system'); // 提取系统消息
-	// const normalMessages = history.filter((msg) => msg.role !== 'system'); // 提取普通消息
-
-	// // 如果超过限制,只保留最近的普通消息
-	// const maxNormalMessages = MAX_HISTORY_MESSAGES - systemMessages.length; // 计算普通消息的最大数量
-	// const startIndex = normalMessages.length - maxNormalMessages; // 计算起始索引
-	// const trimmedNormalMessages = normalMessages.slice(Math.max(0, startIndex)); // 只保留最近的消息
-
-	// // 合并系统消息和精简后的普通消息（系统消息在前）
-	// return [...systemMessages, ...trimmedNormalMessages]; // 返回合并后的历史
-}
 
 /**
  * 处理清空对话
@@ -1043,6 +976,8 @@ function handleClearChat() {
 	// 清空对话历史（系统消息会在下次发送消息时自动添加）
 	conversationHistory = []; // 重置对话历史数组
 
+	// 重置上一轮响应ID
+	previousResponseId = null; // 重置响应ID
 	// 更新状态
 	updateStatus('对话已清空', 'success'); // 更新状态为成功
 	setTimeout(() => {
