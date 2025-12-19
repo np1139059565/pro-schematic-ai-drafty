@@ -466,10 +466,10 @@ async function callAIAndHandleResponse(loadingId) {
 	}
 
 	// 确保系统消息在对话历史中
-	const isAddTool=ensureSystemMessage(); // 确保系统消息存在
+	const isAddTool = ensureSystemMessage(); // 确保系统消息存在
 
 	// 调用 AI API（使用Responses API,传入previous_response_id进行多轮对话）
-	const response = await window.ArkAPI.callArkChat(conversationHistory, previousResponseId, 
+	const response = await window.ArkAPI.callArkChat(conversationHistory, previousResponseId,
 		isAddTool ? window.mcpEDA.toolDescriptions : null); // 调用 ARK API
 
 	// 解析 AI 回复
@@ -671,12 +671,13 @@ async function continueConversationAfterTools(toolInputMessages) {
 		if (!parsedResponse.content) {
 			addMessageToChat('assistant', '操作已完成'); // 添加完成提示
 		}
+		// 恢复状态
+		updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
+		updateStatus('', ''); // 清空状态提示
+		messageInput.focus(); // 聚焦输入框
 	}
 
-	// 恢复状态
-	updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
-	updateStatus('', ''); // 清空状态提示
-	messageInput.focus(); // 聚焦输入框
+
 }
 
 /**

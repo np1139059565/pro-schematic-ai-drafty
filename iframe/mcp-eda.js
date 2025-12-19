@@ -83,7 +83,8 @@ async function callTool(params) {
 		const { name, arguments: args } = params;
 		const [className, methodName] = name.split('.');
 		// 检查工具是否存在
-		const toolSchema = window.mcpEDA.listTools().tools.find(tool => tool.name === name) || window.jdbToolDescriptions.find(tool => tool.name === name);
+		const toolSchema = window.mcpEDA.listTools().tools.find(tool => tool.name === name) || 
+		window.jdbToolDescriptions.find(tool => tool.name === name);
 		if (toolSchema === null) {
 			// 返回符合 MCP 规范的错误格式
 			return buildTextResponse(`工具不存在: ${name}`, true);
