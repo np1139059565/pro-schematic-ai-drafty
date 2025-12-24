@@ -15,9 +15,13 @@ let configDialog; // 配置对话框
 let configCloseBtn; // 配置关闭按钮
 let configSaveBtn; // 配置保存按钮
 let configCancelBtn; // 配置取消按钮
-let arkApiKeyInput; // ARK API Key 输入框
+let arkApiKeyInput; // API Key 输入框
+let arkModelInput; // API Model 输入框
+let arkModelInputContainer; // API Model 输入框容器（用于显示/隐藏）
+let usePrivateServerCheckbox; // 使用私服复选框
 let autoExecWriteCheckbox; // 自动执行复选框
 let autoExecWriteEnabled = false; // 自动执行开关（默认关闭）
+let usePrivateServer = false; // 是否使用私服（默认使用ARK API）
 
 // 对话历史数组,用于维护上下文
 let conversationHistory = []; // 存储所有对话消息,格式: [{role: 'user', content: '...'}, {role: 'assistant', content: '...'}]
@@ -53,6 +57,9 @@ function init() {
 	configSaveBtn = document.getElementById('configSaveBtn');
 	configCancelBtn = document.getElementById('configCancelBtn');
 	arkApiKeyInput = document.getElementById('arkApiKeyInput');
+	arkModelInput = document.getElementById('arkModelInput');
+	arkModelInputContainer = document.getElementById('arkModelInputContainer'); // 获取API Model输入框容器
+	usePrivateServerCheckbox = document.getElementById('usePrivateServerCheckbox'); // 获取使用私服复选框
 	autoExecWriteCheckbox = document.getElementById('autoExecWriteCheckbox'); // 获取自动执行复选框
 
 	// 绑定事件监听器
@@ -70,6 +77,8 @@ function init() {
 		autoExecWriteEnabled = autoExecWriteCheckbox.checked; // 更新写入自动执行开关状态
 	}); // 复选框切换事件
 	autoExecWriteCheckbox.checked = autoExecWriteEnabled; // 初始化复选框状态为默认关闭
+	// 使用私服复选框切换事件
+	usePrivateServerCheckbox.addEventListener('change', handlePrivateServerToggle); // 绑定切换事件
 	// 输入框事件
 	messageInput.addEventListener('keydown', (e) => {
 		// 按 Enter 发送（Shift+Enter 换行）
@@ -411,9 +420,12 @@ async function callAIAndHandleResponse(loadingId) {
 
 	// 确保系统消息在对话历史中
 	const isAddTool = ensureSystemMessage(); // 确保系统消息存在
-	// 调用 AI API（使用Responses API,传入previous_response_id进行多轮对话）
-	const response = await window.ArkAPI.callArkChat(conversationHistory, previousResponseId,
-		isAddTool ? window.mcpEDA.toolDescriptions : null); // 调用 ARK API
+	// 根据配置选择调用 ARK API 或私服 API
+	const response = usePrivateServer
+		? await window.ArkAPI.callPrivateChat(conversationHistory, previousResponseId,
+			isAddTool ? window.mcpEDA.toolDescriptions : null) // 调用私服 API
+		: await window.ArkAPI.callArkChat(conversationHistory, previousResponseId,
+			isAddTool ? window.mcpEDA.toolDescriptions : null); // 调用 ARK API
 
 	// 累加 total_tokens
 	totalTokensAccumulated += response.usage.total_tokens; // 累加 tokens
@@ -569,11 +581,16 @@ async function continueConversationAfterTools(toolInputMessages) {
 	const loadingId = addLoadingIndicator(); // 添加加载指示器
 	updateUIState(UI_STATE.EXECUTING); // 切换到代码执行中状态
 	updateStatus('AI 正在处理结果...', 'info'); // 更新状态提示
-	// 调用Responses API,传入工具执行结果和previous_response_id
-	const response = await window.ArkAPI.callArkChat(
-		toolInputMessages, // 工具执行结果（作为input传入）
-		previousResponseId // 上一轮响应ID
-	); // 调用 ARK API
+	// 根据配置选择调用 ARK API 或私服 API
+	const response = usePrivateServer
+		? await window.ArkAPI.callPrivateChat(
+			toolInputMessages, // 工具执行结果（作为input传入）
+			previousResponseId // 上一轮响应ID
+		) // 调用私服 API
+		: await window.ArkAPI.callArkChat(
+			toolInputMessages, // 工具执行结果（作为input传入）
+			previousResponseId // 上一轮响应ID
+		); // 调用 ARK API
 
 	// 累加 total_tokens
 	totalTokensAccumulated += response.usage.total_tokens; // 累加 tokens
@@ -945,15 +962,33 @@ function scrollToBottom() {
 function loadConfig() {
 	try {
 		// 从 localStorage 读取配置
-		const savedApiKey = localStorage.getItem('user_api_key'); // 读取 ARK API Key
-		// 如果存在配置,则更新 ARK API 模块
-		if (savedApiKey) {
-			// 调用 ark-api.js 的更新配置函数
-			window.ArkAPI.updateConfig(savedApiKey || ''); // 更新配置
-		}
+		const savedApiKey = localStorage.getItem('api_key'); // 读取 API Key
+		const savedModel = localStorage.getItem('api_model'); // 读取 API Model
+		const savedUsePrivateServer = localStorage.getItem('use_private_server') === 'true'; // 读取是否使用私服
+
+		// 根据 model 是否为空决定是否使用私服（如果 model 为空，默认使用私服）
+		usePrivateServer = savedUsePrivateServer !== null ? savedUsePrivateServer : !savedModel; // 如果未保存过配置，根据 model 是否为空决定
+
+		// 调用 ark-api.js 的更新配置函数
+		window.ArkAPI.updateConfig(savedApiKey || '', savedModel || ''); // 更新配置
 	} catch (error) {
 		// 捕获配置加载错误
 		console.error('加载配置失败:', error); // 输出错误日志
+	}
+}
+
+/**
+ * 处理使用私服复选框切换事件
+ * 根据复选框状态显示/隐藏 API Model 输入框
+ */
+function handlePrivateServerToggle() {
+	usePrivateServer = usePrivateServerCheckbox.checked; // 更新使用私服状态
+	if (usePrivateServer) {
+		// 如果使用私服，隐藏 Model 输入框
+		arkModelInputContainer.style.display = 'none'; // 隐藏容器
+	} else {
+		// 如果使用 ARK API，显示 Model 输入框
+		arkModelInputContainer.style.display = 'block'; // 显示容器
 	}
 }
 
@@ -963,10 +998,16 @@ function loadConfig() {
  */
 function handleConfigClick() {
 	// 从 localStorage 读取当前配置值
-	const currentApiKey = localStorage.getItem('user_api_key') || ''; // 读取当前 API Key
+	const currentApiKey = localStorage.getItem('api_key') || ''; // 读取当前 API Key
+	const currentModel = localStorage.getItem('api_model') || ''; // 读取当前 Model
+	const usePrivateServerValue = (currentModel == '') ? true : false; // 读取是否使用私服
 
 	// 填充输入框
 	arkApiKeyInput.value = currentApiKey; // 设置 API Key 输入框值
+	arkModelInput.value = currentModel; // 设置 Model 输入框值
+	usePrivateServerCheckbox.checked = usePrivateServerValue; // 设置使用私服复选框状态
+	handlePrivateServerToggle(); // 根据复选框状态显示/隐藏 Model 输入框
+	usePrivateServer = usePrivateServerValue; // 更新使用私服状态
 
 	// 显示配置对话框
 	configDialog.style.display = 'block'; // 显示对话框
@@ -988,21 +1029,11 @@ function handleSaveConfig() {
 	try {
 		// 获取输入框的值
 		const apiKey = arkApiKeyInput.value.trim(); // 获取 API Key 并去除首尾空格
+		const model = usePrivateServer ? '' : arkModelInput.value.trim(); // 如果使用私服，model 为空；否则获取 Model 并去除首尾空格
 
-		// 保存到 localStorage
-		if (apiKey) {
-			// 如果 API Key 不为空
-			localStorage.setItem('user_api_key', apiKey); // 保存 API Key
-		} else {
-			// 如果 API Key 为空
-			localStorage.removeItem('user_api_key'); // 删除 API Key
-		}
 
 		// 更新 ARK API 模块配置
-		if (window.ArkAPI && window.ArkAPI.updateConfig) {
-			// 如果 updateConfig 函数存在
-			window.ArkAPI.updateConfig(apiKey); // 更新配置
-		}
+		window.ArkAPI.updateConfig(apiKey, model); // 更新配置
 
 		// 关闭配置对话框
 		handleCloseConfig(); // 关闭对话框
@@ -1042,7 +1073,7 @@ async function setupPrivateServerLink() {
 		}); // 调用 LCEDA API
 		const data = await response.json(); // 解析响应
 
-		if (isLogin && data.success && data.code === 0) {
+		if (isLogin /*&& data.success && data.code === 0*/) {
 			// 构建用户信息对象（包含完整 LCEDA 信息）
 			const userInfo = {
 				uuid: loginData.uuid || '',
@@ -1054,6 +1085,8 @@ async function setupPrivateServerLink() {
 			// 设置私服链接 URL
 			const serverUrl = 'https://113.46.209.138/login?uinfo=' + uinfo; // 构建完整 URL
 			privateServerLink.href = serverUrl; // 设置链接地址
+		}else{
+			// alert('登录信息解析失败,请重新登录(如果确认已经登录,请点击右上角个人中心获取登录信息)');
 		}
 	} catch (error) {
 		console.error('解析登录信息失败:', error); // 输出错误日志

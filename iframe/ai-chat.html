@@ -59,13 +59,26 @@
 			</div>
 			<div class="config-body">
 				<div class="config-intro">
-					<p>为了使用 AI 助手功能，您需要配置 ARK API 的相关信息。
-						请点击<a href="#" id="privateServerLink" target="_blank" rel="noopener noreferrer">私服登录</a>后使用。
+					<p>为了使用 AI 助手功能，您需要配置 ARK API 的相关信息。如果您有开发者的经验,请自行前往
+						<a href="https://www.volcengine.com/" target="_blank" rel="noopener noreferrer">火山引擎官网</a>
+						注册并获取 API Key 和 Model 信息。<br/>
+						或者您想直接使用而不想要了解太多的技术细节,也可以点击
+						<a href="#" id="privateServerLink" target="_blank" rel="noopener noreferrer">私服登录</a>后使用。
 						 </p>
 				</div>
 				<div class="config-item">
-					<label for="arkApiKeyInput">ARK API Key:</label>
-					<input type="text" id="arkApiKeyInput" class="config-input" placeholder="请输入 ARK API Key" />
+					<label>
+						<input type="checkbox" id="usePrivateServerCheckbox" class="config-checkbox" />
+						使用私服
+					</label>
+				</div>
+				<div class="config-item">
+					<label for="arkApiKeyInput">API Key:</label>
+					<input type="text" id="arkApiKeyInput" class="config-input" placeholder="请输入 API Key" />
+				</div>
+				<div class="config-item" id="arkModelInputContainer">
+					<label for="arkModelInput">API Model:</label>
+					<input type="text" id="arkModelInput" class="config-input" placeholder="请输入 API Model" />
 				</div>
 			</div>
 				<div class="config-footer">
