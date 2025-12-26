@@ -1,14 +1,7 @@
-// jdb.js:缓存数据库
-
-// 资源列表(数据、信息、内容)
-window.jdbResourceList = [
-
-];
-
 
 // 提示列表(流程、步骤、规则)
 // 采用三层架构：规则约束层 + 流程引导层 + 智能执行层
-window.jdbPromptList = [
+window.promptList = [
     {
         "name": "system_message",
         "description": "AI 角色和职责定义，描述 AI 助手的专业背景和执行框架",

@@ -254,24 +254,8 @@ function getConfig() {
  * @param apiModel - API Model（可选，使用私服时为空）
  */
 function updateConfig(apiKey, apiModel) {
-	// 如果提供了API Key，保存到localStorage
-	if (apiKey) {
-		try {
-			localStorage.setItem('api_key', apiKey); // 保存用户API Key
-		} catch (error) {
-			console.error('保存用户API Key失败:', error); // 输出错误日志
-		}
-	}
-
-	// 如果提供了API Model，保存到localStorage
-	if (apiModel!=null) {
-		try {
-			localStorage.setItem('api_model', apiModel); // 保存API Model
-		} catch (error) {
-			console.error('保存API Model失败:', error); // 输出错误日志
-		}
-	}
-
+	localStorage.setItem('api_key', apiKey); // 保存用户API Key
+	localStorage.setItem('api_model', apiModel); // 保存API Model
 }
 
 window.ArkAPI = {

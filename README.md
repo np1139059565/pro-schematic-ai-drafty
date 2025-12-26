@@ -1,46 +1,98 @@
-[简体中文](#) 
 
-# pro-schematic-ai
-
-基于嘉立创EDA专业版扩展API开发的原理图设计AI助手扩展包
-
-<a href="https://github.com/np1139059565/pro-schematic-ai" style="vertical-align: inherit;" target="_blank"><img src="https://img.shields.io/github/stars/np1139059565/pro-schematic-ai" alt="GitHub Repo Stars" class="not-medium-zoom-image" style="display: inline; vertical-align: inherit;" /></a>&nbsp;<a href="https://github.com/np1139059565/pro-schematic-ai/issues" style="vertical-align: inherit;" target="_blank"><img src="https://img.shields.io/github/issues/np1139059565/pro-schematic-ai" alt="GitHub Issues" class="not-medium-zoom-image" style="display: inline; vertical-align: inherit;" /></a>&nbsp;<a href="https://github.com/np1139059565/pro-schematic-ai" style="vertical-align: inherit;" target="_blank"><img src="https://img.shields.io/github/repo-size/np1139059565/pro-schematic-ai" alt="GitHub Repo Size" class="not-medium-zoom-image" style="display: inline; vertical-align: inherit;" /></a>&nbsp;<a href="https://choosealicense.com/licenses/apache-2.0/" style="vertical-align: inherit;" target="_blank"><img src="https://img.shields.io/github/license/np1139059565/pro-schematic-ai" alt="GitHub License" class="not-medium-zoom-image" style="display: inline; vertical-align: inherit;" /></a>&nbsp;<a href="https://www.npmjs.com/package/@jlceda/pro-api-types" style="vertical-align: inherit;" target="_blank"><img src="https://img.shields.io/npm/v/%40jlceda%2Fpro-api-types?label=pro-api-types" alt="NPM Version" class="not-medium-zoom-image" style="display: inline; vertical-align: inherit;" /></a>&nbsp;<a href="https://www.npmjs.com/package/@jlceda/pro-api-types" style="vertical-align: inherit;" target="_blank"><img src="https://img.shields.io/npm/d18m/%40jlceda%2Fpro-api-types" alt="NPM Downloads" class="not-medium-zoom-image" style="display: inline; vertical-align: inherit;" /></a>
-
-> [!NOTE]
->
 > 详细开发文档请访问：[https://prodocs.lceda.cn/cn/api/guide/](https://prodocs.lceda.cn/cn/api/guide/)
 
-## 功能特性
+## 功能概述
 
-- 原理图 AI 对话：支持自然语言问答与上下文管理
-- 自动读取/分析：可读取原理图信息，辅助设计优化
-- 代码自动执行：集成火山引擎 ARK API，为设计场景生成并执行代码,注意:需要配置自己的AI KEY
-- 安全确认：写操作需显式确认，避免误修改
+pro-schematic-ai 是一款专为原理图设计人员开发的智能工具，具备以下核心功能：
 
-## AI Key 配置
+1. **AI 对话**：支持自然语言问答与上下文管理，快速解答原理图设计相关问题
+2. **工具调用**：AI 可以调用 EDA API 读取原理图信息，如查询选中元件、读取原理图结构等
+3. **代码执行**：集成火山引擎 ARK API，为设计场景生成并执行代码，支持自动化操作
+4. **安全确认**：代码执行前需用户确认，可开启自动执行开关实现自动执行
 
-- 需在扩展界面的“配置”中填写 ARK API Key 与 Model，未配置将无法使用 AI 对话/代码执行能力
+## 使用说明
 
-## 兼容性
+### 1. 导入扩展
 
-- 依赖嘉立创EDA专业版 `>= 2.3.0`（与 extension.json `engines.eda` 保持一致）
-
-## 安装
-
-### 扩展广场安装
+#### 扩展广场安装
 1. 打开嘉立创EDA专业版
 2. 高级 → 扩展管理器
-3. 搜索 “AI 助手” 并安装
+3. 搜索 "AI 助手" 并安装
 
-### 本地导入安装
+#### 本地导入安装
 1. 下载构建产物（`./build/dist/` 下的扩展包）
 2. 高级 → 扩展管理器 → 导入
 3. 选择扩展包文件完成安装
 
-## 使用入口
+![导入ai助手扩展](images/import.gif)
+
+### 2. 配置 API Key
+
+1. 在扩展管理器中启用扩展，并确保已开启 **外部交互**
+2. 打开 AI 助手对话界面（通过菜单 `AI 助手` → `原理图设计助手`）
+3. 点击对话界面右上角的 **配置** 按钮
+4. 在配置对话框中填写以下信息：
+   - **API Key**：火山引擎 ARK API Key
+   - **API Model**：API Model（使用私服时不需要填写）
+   - **使用私服**：可选择使用私服模式，使用私服时只需填写 API Key
+
+> 注意：
+  需要配置自己的 AI KEY。ARK API 凭证获取方式：前往 [火山引擎官网](https://www.volcengine.com/) 注册并获取 API Key 和 Model 信息。
+  或者点击配置对话框中的"私服登录"链接领取 token 后使用。
+
+![使用前配置api key](images/apikey.gif)
+
+### 3. 使用入口
 
 - Home / Sch / PCB 菜单：`AI 助手` → `原理图设计助手` 打开对话
 - 关于：`AI 助手` → `About...`
+
+## 功能介绍
+
+### AI 对话
+
+在输入框中输入原理图设计相关问题，AI 会根据问题给出专业回答。支持自然语言问答与上下文管理，能够理解设计意图并提供针对性建议。
+
+AI 可以调用 EDA API 工具来读取原理图信息，例如：
+- 查询选中元件的详细信息（参数、封装等）
+- 读取原理图中的所有元件列表
+- 获取元件的引脚信息
+- 分析原理图结构和连接关系
+
+### 元件信息查询
+
+在原理图中选中元件后，在对话界面输入相关问题（如"查询这个元件的详细信息"），AI 会调用 EDA API 读取选中元件的信息并返回详细结果。
+
+![使用场景1 获取鼠标选中的元件的信息](images/scenario1.gif)
+
+### 复合任务处理
+
+AI 助手支持处理复杂的复合任务，可以一次性完成多个操作。例如：
+- 查询多个元件信息并进行分析
+- 批量读取原理图数据并进行处理
+- 执行多个工具调用完成复杂的设计任务
+
+通过自然语言描述任务需求，AI 会理解任务意图，自动调用多个 EDA API 工具，按步骤完成复合任务。
+
+![使用场景2 复合任务](images/scenario2.gif)
+
+### 代码自动执行
+
+AI 可以根据对话内容生成代码并执行，用于读取或修改原理图。代码执行机制：
+
+- **确认执行**：默认情况下，AI 生成的代码会显示在对话界面，需要点击"确认执行"按钮才会执行
+- **自动执行**：开启对话界面右上角的"自动执行"开关后，代码会在 2 秒后自动执行
+- **安全机制**：写操作（修改原理图）默认需要确认，避免误修改设计文件
+
+支持的操作包括：
+- 批量修改元件参数
+- 放置元件到原理图
+- 创建导线连接
+- 查询和分析原理图结构
+
+## 兼容性
+
+- 依赖嘉立创EDA专业版 `>= 2.3.0`（与 extension.json `engines.eda` 保持一致）
 
 ## 开发与构建
 
@@ -114,7 +166,5 @@
 感谢你的贡献！🎉
 
 ## 开源许可
-
-<a href="https://choosealicense.com/licenses/apache-2.0/" style="vertical-align: inherit;" target="_blank"><img src="https://img.shields.io/github/license/np1139059565/pro-schematic-ai" alt="GitHub License" class="not-medium-zoom-image" style="display: inline; vertical-align: inherit;" /></a>
 
 本扩展包使用 [Apache License 2.0](https://choosealicense.com/licenses/apache-2.0/) 开源许可协议。

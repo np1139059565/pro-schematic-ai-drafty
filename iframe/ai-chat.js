@@ -28,6 +28,11 @@ let conversationHistory = []; // 存储所有对话消息,格式: [{role: 'user'
 let previousResponseId = null; // 上一轮响应的ID（用于多轮对话）
 let isStop = false; // 是否停止
 let totalTokensAccumulated = 0; // 累加多轮对话的 total_tokens
+let currentLoadingId = null; // 当前加载指示器ID
+
+// 异步操作追踪
+let activeTimeouts = new Set(); // 追踪正在执行的 setTimeout ID
+let activeApiPromises = new Set(); // 追踪正在执行的 API Promise
 
 // 界面状态枚举
 const UI_STATE = {
@@ -41,7 +46,7 @@ let currentUIState = UI_STATE.IDLE; // 当前界面状态
 
 
 // 系统消息 - 用于描述 AI 角色和职责,用户可以在控制台临时修改系统消息,对ai助手进行定制化
-window.top.systemMessage = window.jdbPromptList.find(prompt => prompt.name === 'system_message').messages[0].content.text;
+window.top.systemMessage = window.promptList.find(prompt => prompt.name === 'system_message').messages[0].content.text;
 // 初始化函数
 function init() {
 	// 获取 DOM 元素
@@ -409,56 +414,79 @@ async function executeToolCalls(toolCalls) {
 /**
  * 调用AI API并处理响应
  * 包括调用API、解析响应、添加AI回复到界面和历史
- * @param loadingId - 加载指示器ID
  */
-async function callAIAndHandleResponse(loadingId) {
-	// 如果停止状态为true,直接返回
-	if (isStop) {
-		resumeStop();
-		return; // 直接返回
-	}
+async function callAIAndHandleResponse() {
 
 	// 确保系统消息在对话历史中
 	const isAddTool = ensureSystemMessage(); // 确保系统消息存在
-	// 根据配置选择调用 ARK API 或私服 API
-	const response = usePrivateServer
-		? await window.ArkAPI.callPrivateChat(conversationHistory, previousResponseId,
-			isAddTool ? window.mcpEDA.toolDescriptions : null) // 调用私服 API
-		: await window.ArkAPI.callArkChat(conversationHistory, previousResponseId,
-			isAddTool ? window.mcpEDA.toolDescriptions : null); // 调用 ARK API
+	
+	// 创建 API Promise 并追踪
+	let apiPromise;
+	try {
+		// 根据配置选择调用 ARK API 或私服 API
+		apiPromise = 
+			window.ArkAPI[usePrivateServer?'callPrivateChat':'callArkChat'](
+				conversationHistory, previousResponseId,isAddTool ? window.mcpEDA.toolDescriptions : null); // 调用 API
+		
+		// 追踪 API Promise
+		activeApiPromises.add(apiPromise); // 添加到追踪集合
+		
+		// 等待 API 响应
+		const response = await apiPromise;
+		
+		// 从追踪集合中移除
+		activeApiPromises.delete(apiPromise); // 移除追踪
+		// 如果停止状态为true,直接返回
+		if (isStop) {
+			resumeStop();
+			return; // 直接返回
+		}
+		// 累加 total_tokens
+		totalTokensAccumulated += response.usage.total_tokens; // 累加 tokens
+		console.info(`total_tokens累计: ${totalTokensAccumulated}`, 'history', conversationHistory);//打印对话历史和累计tokens
 
-	// 累加 total_tokens
-	totalTokensAccumulated += response.usage.total_tokens; // 累加 tokens
-	console.info(`total_tokens累计: ${totalTokensAccumulated}`, 'history', conversationHistory);//打印对话历史和累计tokens
+		// 解析 AI 回复
+		const parsedResponse = parseAIResponse(response); // 解析响应
+		addAssistantMessageToHistory(parsedResponse.content, parsedResponse.toolCalls); // 添加到对话历史
 
-	// 解析 AI 回复
-	const parsedResponse = parseAIResponse(response); // 解析响应
-	addAssistantMessageToHistory(parsedResponse.content, parsedResponse.toolCalls); // 添加到对话历史
+		// 更新上一轮响应ID（使用公共函数）
+		updatePreviousResponseId(parsedResponse.responseId); // 更新响应ID
 
-	// 更新上一轮响应ID（使用公共函数）
-	updatePreviousResponseId(parsedResponse.responseId); // 更新响应ID
+		// 如果有内容,添加到界面和历史
+		if (parsedResponse.content) {
+			// 移除加载指示器
+			removeLoadingIndicator(); // 移除加载动画
 
-	// 如果有内容,添加到界面和历史
-	if (parsedResponse.content) {
+			// 添加 AI 回复到界面
+			addMessageToChat('assistant', parsedResponse.content); // 添加 AI 回复
+		}
+
+		// 检查是否有工具调用
+		if (parsedResponse.toolCalls && parsedResponse.toolCalls.length > 0) {
+			// 如果有工具调用,生成代码块并等待用户确认
+			// 生成代码块内容
+			const codeContent = generateCodeFromToolCalls(parsedResponse.toolCalls); // 生成代码
+
+			// 创建代码块展示（等待用户确认）
+			createToolCallCodeBlock(codeContent, parsedResponse.toolCalls); // 创建代码块
+		} else {
+			// 如果没有工具调用,说明模型已经完成回复
+			// 移除加载指示器（如果还在显示）
+			removeLoadingIndicator(); // 移除加载动画
+		}
+	} catch (error) {
+		// 从追踪集合中移除（即使出错也要移除）
+		if (apiPromise) {
+			activeApiPromises.delete(apiPromise); // 移除追踪
+		}
 		// 移除加载指示器
-		removeLoadingIndicator(loadingId); // 移除加载动画
-
-		// 添加 AI 回复到界面
-		addMessageToChat('assistant', parsedResponse.content); // 添加 AI 回复
-	}
-
-	// 检查是否有工具调用
-	if (parsedResponse.toolCalls && parsedResponse.toolCalls.length > 0) {
-		// 如果有工具调用,生成代码块并等待用户确认
-		// 生成代码块内容
-		const codeContent = generateCodeFromToolCalls(parsedResponse.toolCalls); // 生成代码
-
-		// 创建代码块展示（等待用户确认）
-		createToolCallCodeBlock(codeContent, parsedResponse.toolCalls, loadingId); // 创建代码块
-	} else {
-		// 如果没有工具调用,说明模型已经完成回复
-		// 移除加载指示器（如果还在显示）
-		removeLoadingIndicator(loadingId); // 移除加载动画
+		removeLoadingIndicator(); // 移除加载动画
+		// 如果停止状态为true,直接返回
+		if (isStop) {
+			resumeStop();
+			return; // 直接返回
+		}
+		throw error; // 重新抛出错误
 	}
 
 }
@@ -468,9 +496,8 @@ async function callAIAndHandleResponse(loadingId) {
  * 创建工具调用代码块（等待用户确认执行）
  * @param {string} codeContent - 代码内容
  * @param {Array} toolCalls - 工具调用数组
- * @param {string|null} loadingId - 加载指示器ID（可选,如果提供则在创建代码块后移除）
  */
-function createToolCallCodeBlock(codeContent, toolCalls, loadingId = null) {
+function createToolCallCodeBlock(codeContent, toolCalls) {
 	// 创建代码容器
 	const codeContainer = document.createElement('div'); // 创建代码容器
 	codeContainer.className = 'code-block-container'; // 设置代码容器类名
@@ -508,22 +535,22 @@ function createToolCallCodeBlock(codeContent, toolCalls, loadingId = null) {
 	messageDiv.appendChild(contentDiv); // 将内容添加到消息容器
 	messagesContainer.appendChild(messageDiv); // 将消息添加到消息容器
 
-	// 如果提供了加载指示器ID,立即移除加载指示器
-	if (loadingId) {
-		removeLoadingIndicator(loadingId); // 移除加载动画
-	}
+	// 移除加载指示器
+	removeLoadingIndicator(); // 移除加载动画
 
 	scrollToBottom(); // 滚动到消息底部
 
 	// 如果开启自动执行,5 秒后自动触发执行
 	if (autoExecWriteEnabled) {
-		setTimeout(() => {
+		const timeoutId = setTimeout(() => {
 			// 延迟执行
+			activeTimeouts.delete(timeoutId); // 从追踪集合中移除
 			if (!confirmBtn.disabled) {
 				// 未被禁用才执行
 				confirmBtn.click(); // 自动点击执行
 			}
-		}, 5000); // 5 秒延迟
+		}, 2000); // 5 秒延迟
+		activeTimeouts.add(timeoutId); // 追踪 setTimeout
 	}
 }
 
@@ -578,51 +605,79 @@ function handleToolExecutionResults(toolResults, codeContainer, button) {
  */
 async function continueConversationAfterTools(toolInputMessages) {
 	// 继续调用模型获取最终回复（使用Responses API）
-	const loadingId = addLoadingIndicator(); // 添加加载指示器
+	addLoadingIndicator(); // 添加加载指示器
 	updateUIState(UI_STATE.EXECUTING); // 切换到代码执行中状态
 	updateStatus('AI 正在处理结果...', 'info'); // 更新状态提示
-	// 根据配置选择调用 ARK API 或私服 API
-	const response = usePrivateServer
-		? await window.ArkAPI.callPrivateChat(
-			toolInputMessages, // 工具执行结果（作为input传入）
+	
+	// 创建 API Promise 并追踪
+	let apiPromise;
+	try {
+		// 根据配置选择调用 ARK API 或私服 API
+		apiPromise = window.ArkAPI[usePrivateServer ? 'callPrivateChat' : 'callArkChat'](
+				toolInputMessages, // 工具执行结果（作为input传入）
 			previousResponseId // 上一轮响应ID
-		) // 调用私服 API
-		: await window.ArkAPI.callArkChat(
-			toolInputMessages, // 工具执行结果（作为input传入）
-			previousResponseId // 上一轮响应ID
-		); // 调用 ARK API
-
-	// 累加 total_tokens
-	totalTokensAccumulated += response.usage.total_tokens; // 累加 tokens
-	console.info('history', conversationHistory, `total_tokens累计: ${totalTokensAccumulated}`);//打印对话历史和累计tokens
-
-	// 解析响应
-	const parsedResponse = parseAIResponse(response); // 解析响应
-	addAssistantMessageToHistory(parsedResponse.content, parsedResponse.toolCalls); // 添加到对话历史
-
-	// 更新上一轮响应ID（使用公共函数）
-	updatePreviousResponseId(parsedResponse.responseId); // 更新响应ID
-
-	// 如果有内容,添加到界面
-	if (parsedResponse.content) {
-		addMessageToChat('assistant', parsedResponse.content); // 添加 AI 回复
-	}
-
-	// 检查是否还有工具调用
-	if (parsedResponse.toolCalls && parsedResponse.toolCalls.length > 0) {
-		// 如果有工具调用,生成代码块并等待用户确认
-		const codeContent = generateCodeFromToolCalls(parsedResponse.toolCalls); // 生成代码
-		createToolCallCodeBlock(codeContent, parsedResponse.toolCalls, loadingId); // 创建代码块
-	} else {
-		// 如果没有工具调用,完成
-		removeLoadingIndicator(loadingId); // 移除加载动画
-		if (!parsedResponse.content) {
-			addMessageToChat('assistant', '操作已完成'); // 添加完成提示
+		); // 调用 API
+		
+		// 追踪 API Promise
+		activeApiPromises.add(apiPromise); // 添加到追踪集合
+		
+		// 等待 API 响应
+		const response = await apiPromise;
+		
+		// 从追踪集合中移除
+		activeApiPromises.delete(apiPromise); // 移除追踪
+		
+		// 如果停止状态为true,直接返回
+		if (isStop) {
+			resumeStop();
+			return; // 直接返回
 		}
-		// 恢复状态
-		updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
-		updateStatus('', ''); // 清空状态提示
-		messageInput.focus(); // 聚焦输入框
+		
+		// 累加 total_tokens
+		totalTokensAccumulated += response.usage.total_tokens; // 累加 tokens
+		console.info('history', conversationHistory, `total_tokens累计: ${totalTokensAccumulated}`);//打印对话历史和累计tokens
+
+		// 解析响应
+		const parsedResponse = parseAIResponse(response); // 解析响应
+		addAssistantMessageToHistory(parsedResponse.content, parsedResponse.toolCalls); // 添加到对话历史
+
+		// 更新上一轮响应ID（使用公共函数）
+		updatePreviousResponseId(parsedResponse.responseId); // 更新响应ID
+
+		// 如果有内容,添加到界面
+		if (parsedResponse.content) {
+			addMessageToChat('assistant', parsedResponse.content); // 添加 AI 回复
+		}
+
+		// 检查是否还有工具调用
+		if (parsedResponse.toolCalls && parsedResponse.toolCalls.length > 0) {
+			// 如果有工具调用,生成代码块并等待用户确认
+			const codeContent = generateCodeFromToolCalls(parsedResponse.toolCalls); // 生成代码
+			createToolCallCodeBlock(codeContent, parsedResponse.toolCalls); // 创建代码块
+		} else {
+			// 如果没有工具调用,完成
+			removeLoadingIndicator(); // 移除加载动画
+			if (!parsedResponse.content) {
+				addMessageToChat('assistant', '操作已完成'); // 添加完成提示
+			}
+			// 恢复状态
+			updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
+			updateStatus('', ''); // 清空状态提示
+			messageInput.focus(); // 聚焦输入框
+		}
+	} catch (error) {
+		// 从追踪集合中移除（即使出错也要移除）
+		if (apiPromise) {
+			activeApiPromises.delete(apiPromise); // 移除追踪
+		}
+		// 移除加载指示器
+		removeLoadingIndicator(); // 移除加载动画
+		// 如果停止状态为true,直接返回
+		if (isStop) {
+			resumeStop();
+			return; // 直接返回
+		}
+		throw error; // 重新抛出错误
 	}
 
 
@@ -635,31 +690,37 @@ async function continueConversationAfterTools(toolInputMessages) {
  * @param {Object} button - 执行按钮DOM元素
  */
 async function executeToolCallsAndContinue(toolCalls, codeContainer, button) {
-	// 禁用按钮并更新文本
-	button.disabled = true; // 禁用按钮
-	button.textContent = '执行中...'; // 更新按钮文本
+	try {
+		// 禁用按钮并更新文本
+		button.disabled = true; // 禁用按钮
+		button.textContent = '执行中...'; // 更新按钮文本
 
-	// 执行工具调用
-	const toolResults = await executeToolCalls(toolCalls); // 执行工具调用
+		// 执行工具调用
+		const toolResults = await executeToolCalls(toolCalls); // 执行工具调用
 
-	// 处理工具执行结果
-	const toolInputMessages = handleToolExecutionResults(toolResults, codeContainer, button); // 处理结果并获取工具输入消息
+		// 处理工具执行结果
+		const toolInputMessages = handleToolExecutionResults(toolResults, codeContainer, button); // 处理结果并获取工具输入消息
 
-	// 继续对话
-	await continueConversationAfterTools(toolInputMessages); // 继续对话
+		// 继续对话
+		await continueConversationAfterTools(toolInputMessages); // 继续对话
+	} catch (error) {
+		// 捕获错误并显示
+		handleAIError(error, '工具执行后继续对话失败'); // 统一错误处理
+		// 恢复UI状态
+		updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
+		updateStatus('', ''); // 清空状态提示
+		messageInput.focus(); // 聚焦输入框
+	}
 }
 
 /**
  * 处理AI请求错误
  * @param error - 错误对象
- * @param loadingId - 加载指示器ID（可选）
  * @param errorPrefix - 错误日志前缀（可选）
  */
-function handleAIError(error, loadingId = null, errorPrefix = 'AI 请求失败') {
+function handleAIError(error, errorPrefix = 'AI 请求失败') {
 	// 移除加载指示器（如果存在）
-	if (loadingId) {
-		removeLoadingIndicator(loadingId); // 移除加载动画
-	}
+	removeLoadingIndicator(); // 移除加载动画
 
 	// 输出错误日志
 	console.error(`${errorPrefix}:`, error); // 输出错误日志
@@ -706,10 +767,27 @@ async function handleSendMessage() {
 
 /**
  * 处理停止按钮点击事件
+ * 立即检测并取消所有正在执行的异步操作，如果没有正在执行的操作，则立即恢复到空闲状态
  */
 function handleStop() {
 	isStop = true; // 设置为停止状态
-	updateUIState(UI_STATE.STOPPED); // 更新为停止状态
+	
+	// 取消所有正在执行的 setTimeout
+	activeTimeouts.forEach(timeoutId => {
+		clearTimeout(timeoutId); // 清除定时器
+	});
+	
+	// 检测是否有正在执行的 API 请求
+	const hasActiveApiRequest = activeApiPromises.size > 0; // 检查是否有正在执行的 API 请求
+	
+	// 如果没有正在执行的操作，立即恢复到空闲状态
+	if (!hasActiveApiRequest) {
+		// 没有正在执行的操作，立即恢复
+		resumeStop(); // 恢复到空闲状态
+	} else {
+		// 有正在执行的操作，更新为停止状态（等待操作完成后自动恢复）
+		updateUIState(UI_STATE.STOPPED); // 更新为停止状态
+	}
 }
 
 /**
@@ -717,6 +795,11 @@ function handleStop() {
  */
 function resumeStop() {
 	isStop = false; // 重置停止状态
+	removeLoadingIndicator(); // 移除加载指示器
+	// 清理所有追踪（确保状态一致）
+	activeTimeouts.clear(); // 清空 setTimeout 追踪
+	activeApiPromises.clear(); // 清空 API Promise 追踪
+	
 	updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
 	messageInput.focus(); // 聚焦到输入框
 }
@@ -781,6 +864,7 @@ function addLoadingIndicator() {
 	const messageDiv = document.createElement('div'); // 创建消息容器
 	messageDiv.className = 'message assistant'; // 设置消息类名
 	const loadingId = 'loading-' + Date.now(); // 生成唯一 ID
+	currentLoadingId = loadingId; // 保存到全局变量
 	messageDiv.id = loadingId; // 设置 ID
 
 	// 创建加载内容元素
@@ -807,14 +891,16 @@ function addLoadingIndicator() {
 
 /**
  * 移除加载指示器
- * @param loadingId - 加载指示器的 ID
  */
-function removeLoadingIndicator(loadingId) {
+function removeLoadingIndicator() {
 	// 查找并移除加载指示器
-	const loadingElement = document.getElementById(loadingId); // 获取加载元素
-	if (loadingElement) {
-		// 如果元素存在
-		loadingElement.remove(); // 移除元素
+	if (currentLoadingId) {
+		const loadingElement = document.getElementById(currentLoadingId); // 获取加载元素
+		if (loadingElement) {
+			// 如果元素存在
+			loadingElement.remove(); // 移除元素
+		}
+		currentLoadingId = null; // 清空全局变量
 	}
 }
 
@@ -859,20 +945,19 @@ async function runSendFlow({
 	errorPrefix, // 错误前缀文案
 	needScroll = true, // 是否需要滚动
 }) {
-	let loadingId = null; // 记录加载指示器 ID
 	try {
 		updateUIState(uiState); // 切换 UI 状态
 		updateStatus(statusText, 'info'); // 更新状态提示
 		beforeSend(); // 执行发送前 UI 操作
 		appendHistory(); // 写入对话历史
-		loadingId = addLoadingIndicator(); // 添加加载指示器
+		addLoadingIndicator(); // 添加加载指示器
 		if (needScroll) {
 			scrollToBottom(); // 按需滚动到底部
 		}
-		await callAIAndHandleResponse(loadingId); // 调用 AI 并处理响应
+		await callAIAndHandleResponse(); // 调用 AI 并处理响应
 		updateStatus('', ''); // 清空状态提示
 	} catch (error) {
-		handleAIError(error, loadingId, errorPrefix); // 统一错误处理
+		handleAIError(error, errorPrefix); // 统一错误处理
 	} finally {
 		updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
 		messageInput.focus(); // 聚焦输入框

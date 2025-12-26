@@ -168,7 +168,7 @@ async function readResource(params) {
 function listPrompts() {
 	// 包装为符合 MCP 规范的返回格式
 	return {
-		prompts: window.jdbPromptList.map(p => ({
+		prompts: window.promptList.map(p => ({
 			name: p.name,
 			description: p.description,
 			arguments: p.messages.map(m => ({
@@ -193,7 +193,7 @@ async function getPrompt(params) {
 	const { name, arguments: _args } = params;
 
 	// 从提示列表中查找提示(如果arguments不为空,则查找arguments.name对应的提示)
-	const prompt = window.jdbPromptList.find(prompt => prompt.name === name);
+	const prompt = window.promptList.find(prompt => prompt.name === name);
 	if (!prompt) {
 		throw new Error(`提示不存在: ${name}`);
 	}
