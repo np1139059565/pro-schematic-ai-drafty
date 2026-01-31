@@ -1,7 +1,7 @@
 {
 	"name": "pro-schematic-ai-drafty",
 	"version": "1.1.1",
-	"description": "基于嘉立创EDA专业版扩展API开发的原理图设计AI助手扩展包",
+	"description": "通过AI助手，可以快速生成原理图，并自动放置元件",
 	"author": "JLCEDA",
 	"license": "Apache-2.0",
 	"homepage": "https://pro.lceda.cn/",

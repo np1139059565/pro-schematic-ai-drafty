@@ -1171,7 +1171,7 @@ async function setupPrivateServerLink() {
 			const serverUrl = 'https://113.46.209.138/login?uinfo=' + uinfo; // 构建完整 URL
 			privateServerLink.href = serverUrl; // 设置链接地址
 		}else{
-			// alert('登录信息解析失败,请重新登录(如果确认已经登录,请点击右上角个人中心获取登录信息)');
+			alert('登录信息解析失败,请重新登录(如果确认已登录,可能出现假登录状态,请退出后再重新能登录)');
 		}
 	} catch (error) {
 		console.error('解析登录信息失败:', error); // 输出错误日志
