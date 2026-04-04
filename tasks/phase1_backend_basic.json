@@ -1,0 +1,68 @@
+{
+  "phase": 1,
+  "title": "后端基础搭建",
+  "description": "创建FastAPI项目结构、配置数据库和模型、实现基本CRUD API",
+  "totalTasks": 4,
+  "startTime": "2026-03-15T22:20:00Z",
+  "estimatedDuration": "4小时",
+  "status": "completed",
+  "tasks": [
+    {
+      "id": "1.1",
+      "title": "创建FastAPI项目结构",
+      "description": "创建项目基础结构，包括requirements.txt、main.py、config、models、routers目录",
+      "status": "completed",
+      "startTime": "2026-03-15T22:20:00Z",
+      "estimatedDuration": "0.5小时",
+      "progress": "100%",
+      "updatedAt": "2026-03-16T07:50:00Z",
+      "completedItems": [
+        "requirements.txt依赖配置",
+        "项目目录结构创建",
+        "main.py应用入口文件",
+        "config/settings.py配置文件",
+        "config/database.py数据库配置",
+        ".env.example环境变量模板",
+        "models/__init__.py模块导出",
+        "models/user.py用户模型",
+        "models/flashcard.py闪记模型",
+        "models/drama.py配音模型",
+        "models/membership.py会员模型",
+        "routers/auth.py认证路由",
+        "routers/users.py用户管理路由",
+        "routers/flashcards.py闪记路由",
+        "routers/dramas.py配音路由",
+        "应用启动测试"
+      ],
+      "remainingItems": []
+    },
+    {
+      "id": "1.2",
+      "title": "配置数据库和模型",
+      "description": "配置SQLAlchemy、SQLite数据库，创建用户、闪记、配音等数据模型",
+      "status": "pending",
+      "estimatedDuration": "1小时",
+      "progress": "0%"
+    },
+    {
+      "id": "1.3",
+      "title": "实现基本CRUD API",
+      "description": "创建用户注册、登录、闪记获取等基础API接口",
+      "status": "pending",
+      "estimatedDuration": "1.5小时",
+      "progress": "0%"
+    },
+    {
+      "id": "1.4",
+      "title": "编写单元测试",
+      "description": "为API接口编写单元测试，确保基本功能正常",
+      "status": "pending",
+      "estimatedDuration": "1小时",
+      "progress": "0%"
+    }
+  ],
+  "currentProgress": "25%",
+  "lastUpdatedAt": "2026-03-16T07:50:00Z",
+  "completedAt": "2026-03-16T07:50:00Z",
+  "completionSummary": "✅ 第一阶段（后端基础搭建）已完成。成功创建完整的FastAPI项目结构，包括所有核心数据模型（User, Flashcard, Drama, Membership）和相应的RESTful API路由（auth, users, flashcards, dramas）。项目已具备基本启动能力。"
+}

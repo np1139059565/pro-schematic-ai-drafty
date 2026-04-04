@@ -1,0 +1,5 @@
+{
+  "lastUpdated": "2026-04-03T09:27:20.598Z",
+  "report": "\n# 📊 技能使用监控报告\n生成时间: 2026/4/3 17:27:20\n\n## 总体统计\n- 总技能数: 14\n- 已触发技能: 4\n- 可触发但未触发: 6\n- 后台自动技能: 4\n\n## 技能触发详情\n✅ find-skills: 已确认使用，检查过SKILL.md\n🔄 prompt-engineering-expert: 等待复杂任务触发\n🔄 qmd: 等待搜索需求\n🔄 oc-skill-router: 等待智能任务分发\n🤖 tool-call-retry: 后台自动运行，难以检测\n🤖 context-pruner: 后台自动运行，难以检测\n🔄 phoenix-loop: 等待复杂任务恢复需求\n🔄 foundry: 等待重复任务模式检测\n🤖 prompt-injection-guard: 安全防护，后台运行\n🔄 memory-hygiene: 等待定时任务执行\n✅ xiucheng-self-improving-agent: 本次手动触发使用\n✅ capability-evolver: 本次分析中检查过SKILL.md\n🤖 openclaw-token-optimizer: 后台自动运行\n✅ active-learner: 本次分析中检查过SKILL.md\n\n## 优化建议\n\n### 立即行动\n1. 主动测试技能 \"prompt-engineering-expert\"：等待复杂任务触发\n2. 主动测试技能 \"qmd\"：等待搜索需求\n3. 主动测试技能 \"oc-skill-router\"：等待智能任务分发\n4. 主动测试技能 \"phoenix-loop\"：等待复杂任务恢复需求\n5. 主动测试技能 \"foundry\"：等待重复任务模式检测\n6. 主动测试技能 \"memory-hygiene\"：等待定时任务执行\n\n### 每日检查\n1. 检查定时任务执行情况（08:03技能优化器，12:00综合检查）\n\n### 每周优化\n1. 全面审查技能利用策略，调整触发条件\n\n## 记忆文件分析\n发现 undefined 个文件包含技能相关记录\n\n---\n\n**监控频率**: 每日自动运行\n**下次检查**: 明天同一时间\n",
+  "timestamp": 1775208440598
+}

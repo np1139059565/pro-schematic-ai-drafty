@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "skills": {
+    "xiucheng-self-improving-agent": {
+      "version": "1.0.0",
+      "installedAt": 1773550552098
+    },
+    "capability-evolver": {
+      "version": "1.29.8",
+      "installedAt": 1773550635165
+    },
+    "lancedb-memory": {
+      "version": "1.0.0",
+      "installedAt": 1773550672079
+    },
+    "foundry": {
+      "version": "0.1.0",
+      "installedAt": 1773550725851
+    },
+    "memos-cloud-skill": {
+      "version": "1.0.1",
+      "installedAt": 1773550772807
+    },
+    "find-skills": {
+      "version": "0.1.0",
+      "installedAt": 1773550792543
+    },
+    "active-learner": {
+      "version": "1.0.0",
+      "installedAt": 1773551206453
+    },
+    "arxiv-skill-learning": {
+      "version": "1.0.0",
+      "installedAt": 1773551275472
+    },
+    "prompt-engineering-expert": {
+      "version": "1.0.0",
+      "installedAt": 1773560032273
+    },
+    "tool-call-retry": {
+      "version": "1.0.1",
+      "installedAt": 1773560052247
+    },
+    "phoenix-loop": {
+      "version": "1.0.0",
+      "installedAt": 1773560198556
+    },
+    "openclaw-token-optimizer": {
+      "version": "3.0.0",
+      "installedAt": 1773562282283
+    },
+    "oc-skill-router": {
+      "version": "2.0.0",
+      "installedAt": 1773562324015
+    },
+    "qmd": {
+      "version": "1.0.0",
+      "installedAt": 1773562335892
+    },
+    "prompt-injection-guard": {
+      "version": "1.0.0",
+      "installedAt": 1773562356951
+    },
+    "memory-hygiene": {
+      "version": "1.0.0",
+      "installedAt": 1773562422004
+    },
+    "context-pruner": {
+      "version": "1.0.0",
+      "installedAt": 1773562442077
+    }
+  }
+}

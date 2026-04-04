@@ -1,0 +1,38 @@
+{
+  "backup_time": "$(date)",
+  "total_jobs": 4,
+  "jobs": [
+    {
+      "name": "每日北京时间12点综合检查",
+      "id": "7161660a-5957-4e23-b14a-3a727d7955de",
+      "schedule": "0 4 * * *",
+      "tz": "UTC",
+      "local_time": "12:00 CST",
+      "type": "github_check"
+    },
+    {
+      "name": "技能利用优化器（每日凌晨）",
+      "id": "13010ed5-5e01-43ca-a016-979b108d7a95",
+      "schedule": "3 0 * * *",
+      "tz": "UTC",
+      "local_time": "08:03 CST",
+      "type": "skill_optimizer"
+    },
+    {
+      "name": "每日晚上8点技能使用监控",
+      "id": "1b1bdebc-ee19-474e-9866-459840287838",
+      "schedule": "0 12 * * *",
+      "tz": "UTC",
+      "local_time": "20:00 CST",
+      "type": "skill_monitor"
+    },
+    {
+      "name": "严格半小时进度报告纪律",
+      "id": "25bf7ab8-b710-4315-a3b4-5b2846c94833",
+      "schedule": "*/30 * * * *",
+      "tz": "Asia/Shanghai",
+      "local_time": "每半小时",
+      "type": "half_hour_report"
+    }
+  ]
+}
