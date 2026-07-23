@@ -1,723 +1,246 @@
-# AI 思维导图 - 嘉立创EDA原理图设计AI执行框架
+# 嘉立创 EDA 原理图设计 AI 执行框架（AI巧绘）设计说明
 
-> **数据来源**:`iframe/mcp-prompt.js` 中的 `window.promptList`  
-> **更新说明**:本文档基于实际代码生成，反映当前系统的真实架构和执行流程  
-> **代码结构**:实际代码中 `window.promptList` 的顺序为:system_message → 流程引导层 → 规则约束层 → 智能执行层
-
----
-
-## 🎯 核心定位
-**角色定义**:兼具10年嘉立创EDA(标准版+专业版)实操经验和原理图业界规范知识的专家
+> 本文档基于插件实际源码整理，覆盖 `src/`、`iframe/`、`extension.json` 的整体架构、模块职责、核心流程与关键实现细节。
+> 版本对应：`extension.json` 中 `version = 1.0.5`（包名 `pro-schematic-ai-drafty`），运行依赖 `eda >= 2.3.0`。
 
 ---
 
-## 📐 三层架构执行框架
+## 一、背景
 
-```
-┌─────────────────────────────────────────────────────────┐
-│              智能执行层 (Execution Layer)                │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  ReAct模式   │  │   Plan模式   │  │  执行指导原则 │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-└─────────────────────────────────────────────────────────┘
-                          ↑
-                          │ 按需获取
-┌─────────────────────────────────────────────────────────┐
-│              流程引导层 (Workflow Layer)                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  需求分析    │  │  元件设计    │  │  布线设计    │  │
-│  │  工作流      │  │  工作流      │  │  工作流      │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  验证优化    │  │  库管理      │  │  文档工程    │  │
-│  │  工作流      │  │  工作流      │  │  管理工作流  │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  图形标注    │  │  网络端口    │  │  网表操作    │  │
-│  │  工作流      │  │  管理工作流  │  │  工作流      │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  DRC检查     │  │  制造数据    │  │  选择交互    │  │
-│  │  工作流      │  │  导出工作流  │  │  工作流      │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-└─────────────────────────────────────────────────────────┘
-                          ↑
-                          │ 按需获取
-┌─────────────────────────────────────────────────────────┐
-│              规则约束层 (Rules Layer)                    │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  间距标准    │  │  布局策略    │  │  布线规则    │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│  ┌──────────────┐  ┌──────────────┐                    │
-│  │  工具要求    │  │  碰撞检测    │                    │
-│  └──────────────┘  └──────────────┘                    │
-└─────────────────────────────────────────────────────────┘
-```
+嘉立创 EDA 专业版开放了JavaScript 扩展能力（`eda.*` 原生 API），允许扩展通过 `iframe` 嵌入自定义界面并与编辑器交互。本项目 **AI巧绘** 是一款原理图设计智能助手扩展，目标是：
+
+- 让开发者用自然语言描述原理图设计意图；
+- 由大模型（LLM）理解意图、规划步骤、调用 EDA 工具完成"搜索元件 → 放置元件 → 连线 → 校验"的自动化操作；
+- 在自动修改设计文件前，以"代码块 + 确认执行"的方式保证安全可控。
+
+技术选型上，AI巧绘采用 **火山引擎方舟（ARK）Responses API** 作为对话与函数调用（Function Calling）后端，并通过 **MCP（Model Context Protocol）风格** 的封装层把嘉立创原生 `eda.*` API 暴露给模型作为可调用的"工具（Tool）"。
 
 ---
 
-## 🔵 第一层:规则约束层 (Rules Layer)
+## 二、需求
 
-### 1.1 业务规则:间距标准 (business_rules_spacing)
-
-```
-间距标准规范
-├── 画布-元件间距:≥10mil(默认12mil)
-├── 画布-导线间距:≥10mil(默认12mil)
-├── 元件-元件边界间距:≥80mil(必须使用边界计算)
-├── 元件-导线边界间距:≥6mil(默认8mil)
-├── 导线-导线间距:≥6mil(默认8mil)
-├── 导线-元件边界间距:≥6mil(默认8mil)
-└── 导线-引脚间距:≥6mil(默认8-10mil)
-
-⚠️ 重要提示:
-  - 间距计算必须基于元件的边界，不能使用中心点
-  - 批量放置时，还需检测新图元之间的相互距离
-  - 碰撞检测时必须检查所有间距标准
-```
-
-### 1.2 业务规则:布局策略 (business_rules_layout)
-
-```
-布局规划策略
-├── 功能分组
-│   └── 按电源/信号/控制/接口等模块集中摆放
-├── 流向布局
-│   └── 按输入→处理→输出的信号流向摆放
-├── 网络标签优先
-│   └── 相同网络标签视为同一路径，优先用标签替代跨图直线
-└── 布局规划考虑因素
-    ├── 分析现有布局，确定元件放置位置(x,y坐标)
-    ├── 确保元件间距符合规范(≥80mil)
-    └── 考虑后续布线需求，预留足够空间
-```
-
-### 1.3 业务规则:布线规则 (business_rules_wiring)
-
-```
-布线规则规范
-├── 障碍物分析
-│   ├── 获取所有元件列表及其引脚坐标
-│   ├── 获取元件边界信息
-│   └── 获取现有导线路径信息
-├── 路径计算
-│   ├── 使用A*算法
-│   └── 先根据元件的引脚列表获取边界再进行计算
-├── 实时碰撞检测
-│   └── 路径计算过程中必须检查间距，使用统一图元碰撞检测机制
-├── 45°优先
-│   └── 优先使用45°走线，禁止锐角
-├── 识别90°拐点
-│   └── 替换为两段45°走线
-├── 障碍绕行
-│   └── 导线必须避开元件边界和现有导线
-├── 关键信号优先
-│   └── 电源/地/时钟等关键信号优先布线
-├── 禁止穿越元件边界包络
-│   └── 导线不能穿越元件边界区域
-└── 路径复用
-    └── 尽可能复用已有路径
-
-导线创建要求:
-  - line 参数必须为连续坐标数组(长度为偶数且不少于4)
-  - line 中的所有 x,y 不能超过画布边界
-  - color 可以不传，但必须不能为null或undefined
-  - lineType 默认值为0(实线)
-```
-
-### 1.4 业务规则:工具特殊要求 (business_rules_tools)
-
-```
-工具特殊要求
-├── sch_PrimitiveComponent$create
-│   ├── subPartName 必填，即使为空字符串(不能省略)
-│   └── x,y 必须在画布范围内(0 ≤ x ≤ width,0 ≤ y ≤ height)
-├── sch_PrimitiveComponent$modify
-│   ├── 如果修改位置，必须检查是否在画布范围内
-│   └── property 必填且必须为对象
-├── sch_PrimitiveComponent$getAllPinsByPrimitiveId
-│   └── 默认 invertY=true(y轴取反)，以符合画布坐标习惯
-├── calculateComponentBounds
-│   ├── 扩展距离10mil
-│   ├── 引脚列表为空时返回空数组
-│   └── 包含无效坐标(NaN)时会忽略该引脚并输出警告
-├── lib_Device$search
-│   ├── 分页规则:带itemsOfPage/page必须提供libraryUuid
-│   └── 如果没有分页参数，则不传递itemsOfPage和page(连null都不能有)
-├── getCanvasSize
-│   └── 默认值1170x825mil(如果API未找到图纸边界信息)
-├── sch_PrimitiveWire$modify
-│   ├── 如果修改路径，必须检查 property.line 中的所有 x,y 是否在画布范围内
-│   ├── property.line 可以是 Array<number> 或 Array<Array<number>> 格式
-│   └── property 必填且必须为对象
-└── sch_PrimitivePolygon$create
-    ├── lineType 枚举值:0:实线,1:虚线,2:点划线,3:点线
-    ├── lineType 是数字或 ESCH_PrimitiveLineType.xxx 格式，禁止添加引号
-    └── color 可为字符串或 null，不允许 undefined
-```
-
-### 1.5 业务规则:碰撞检测机制 (business_rules_collision)
-
-```
-统一图元碰撞检测机制
-├── 检测项目
-│   ├── 新图元与画布边界的距离
-│   ├── 新图元与现有图元的距离
-│   └── 新图元之间的距离(批量放置时)
-├── 检测规则
-│   ├── 新元件与画布边界的距离符合规范(≥10mil，默认12mil)
-│   ├── 新元件与其他元件边界的距离符合规范(≥80mil，不能使用中心点计算)
-│   ├── 新元件与现有导线的距离符合规范(≥6mil，默认8mil)
-│   ├── 批量放置时，还需检测新元件之间的相互距离:≥80mil
-│   ├── 新导线路径与画布边界的距离符合规范(≥10mil，默认12mil)
-│   ├── 新导线路径与元件边界的距离符合规范(≥6mil，默认8mil)
-│   ├── 新导线路径与其他导线的距离符合规范(≥6mil，默认8mil)
-│   └── 新导线路径与引脚的距离符合规范(≥6mil，默认8-10mil)
-└── 重试机制
-    ├── 如有碰撞，调整位置或重新规划，最多重试3次
-    └── 确保无碰撞或已记录违规项
-```
+| 编号 | 需求 | 说明 |
+| --- | --- | --- |
+| N1 | AI 自然语言对话 | 支持多轮上下文问答，解答原理图设计问题 |
+| N2 | 工具调用读写原理图 | 读取选中图元、元件/导线/引脚信息，放置/修改/删除图元 |
+| N3 | 代码生成与确认执行 | AI 生成操作代码，用户在界面确认后才落地到画布；可开启"自动执行" |
+| N4 | 双后端兼容 | 既支持直连火山引擎 ARK API，也支持走"私服"代理（独立 Token 计费体系） |
+| N5 | 三层执行框架 | 规则约束层 + 流程引导层 + 智能执行层，保证 AI 在规范内工作 |
+| N6 | 安全与可控 | 停止生成、清空对话、危险写操作需确认、画布边界与间距校验 |
 
 ---
 
-## 🟢 第二层:流程引导层 (Workflow Layer)
+## 三、设计
 
-### 2.1 工作流:需求分析流程 (workflow_requirement_analysis)
-
-```
-需求分析流程
-│
-├── 节点1:requirement_understanding(需求理解)
-│   ├── 推荐工具:listTools,listResources,getPrompt
-│   ├── 规则:
-│   │   ├── 必须充分理解用户需求(元件类型、数量、功能要求)
-│   │   ├── 如需求不明确，必须询问用户澄清
-│   │   └── 根据需求自动选择合适的工作流
-│   └── 检查点:需求理解完成(必需)
-│       └── 已提取关键信息(元件类型、数量、功能等)
-│
-├── 节点2:requirement_confirmation(需求确认)
-│   ├── 推荐工具:无
-│   ├── 规则:
-│   │   ├── 向用户确认需求理解是否正确
-│   │   └── 根据用户反馈调整需求理解
-│   └── 检查点:需求确认完成(必需)
-│       └── 用户确认需求理解正确
-│
-└── 节点3:workflow_selection(流程选择)
-    ├── 推荐工具:无
-    ├── 规则:
-    │   ├── 根据需求确定后续执行流程
-    │   │   ├── 元件设计
-    │   │   ├── 布线设计
-    │   │   └── 验证优化
-    │   └── 可以同时选择多个流程
-    └── 检查点:流程选择完成(必需)
-        └── 已确定后续执行流程
-```
-
-### 2.2 工作流:元件设计流程 (workflow_component_design)
+### 3.1 整体架构
 
 ```
-元件设计流程
-│
-├── 节点1:component_search(元件搜索)
-│   ├── 推荐工具:lib_Device$search
-│   ├── 规则:分页规则(带itemsOfPage/page必须提供libraryUuid)
-│   └── 检查点:元件搜索完成(必需)- 已搜索到目标元件
-│
-├── 节点2:component_selection(元件选择)
-│   ├── 推荐工具:lib_Device$search
-│   ├── 规则:获取元件的详细信息(uuid,libraryUuid)
-│   └── 检查点:元件选择完成(必需)- 已确定要使用的元件
-│
-├── 节点3:layout_planning(布局规划)
-│   ├── 推荐工具:getCanvasSize,sch_PrimitiveComponent$getAll
-│   ├── 规则:
-│   │   ├── 功能分组:按电源/信号/控制/接口等模块集中摆放
-│   │   ├── 流向布局:按输入→处理→输出的信号流向摆放
-│   │   ├── 网络标签优先:相同网络标签优先用标签替代跨图直线
-│   │   └── 分析现有布局，确定元件放置位置(x,y坐标)
-│   └── 检查点:布局规划完成(必需)- 已确定元件放置位置
-│
-├── 节点4:component_placement(元件放置)
-│   ├── 推荐工具:sch_PrimitiveComponent$create,getCanvasSize
-│   ├── 规则:
-│   │   ├── 元件放置前必须获取画布大小，确保不超出边界
-│   │   ├── 元件间距必须≥80mil(使用边界计算)
-│   │   ├── 批量放置时，多个元件应一起放置
-│   │   ├── subPartName 必填，即使为空字符串
-│   │   └── x,y 必须在画布范围内
-│   └── 检查点:元件放置完成(必需)- 元件已成功放置到画布
-│
-├── 节点5:get_pin_coordinates(获取引脚坐标)
-│   ├── 推荐工具:sch_PrimitiveComponent$getAllPinsByPrimitiveId
-│   ├── 规则:
-│   │   ├── 批量获取所有元件的引脚坐标信息
-│   │   └── 默认 invertY=true(y轴取反)
-│   └── 检查点:引脚坐标获取完成(必需)- 已获取所有元件的引脚坐标
-│
-├── 节点6:calculate_bounds(计算边界)
-│   ├── 推荐工具:calculateComponentBounds
-│   ├── 规则:
-│   │   ├── 边界格式:[x1,y1,x2,y2,x3,y3,x4,y4](顺时针:左下、右下、右上、左上)
-│   │   ├── 扩展距离:10mil
-│   │   └── 如果引脚列表为空或包含无效坐标，会返回空数组或忽略无效引脚
-│   └── 检查点:边界计算完成(必需)- 已计算元件边界
-│
-├── 节点7:collision_detection(碰撞检测)
-│   ├── 推荐工具:sch_PrimitiveComponent$getAll,sch_PrimitiveComponent$getAllPinsByPrimitiveId,
-│   │            calculateComponentBounds,sch_PrimitiveWire$getAll
-│   ├── 规则:
-│   │   ├── 必须使用统一图元碰撞检测机制检测所有碰撞
-│   │   ├── 新元件与画布边界的距离符合规范(≥10mil，默认12mil)
-│   │   ├── 新元件与其他元件边界的距离符合规范(≥80mil，不能使用中心点计算)
-│   │   ├── 新元件与现有导线的距离符合规范(≥6mil，默认8mil)
-│   │   ├── 批量放置时，还需检测新元件之间的相互距离:≥80mil
-│   │   ├── 确保无碰撞或已记录违规项
-│   │   ├── 如有碰撞，执行移动元件操作
-│   │   └── 移动元件后重新执行碰撞检测，最多重试3次
-│   └── 检查点:碰撞检测通过(必需)- 已使用统一图元碰撞检测机制检测所有碰撞
-│
-├── 节点8:move_component(移动元件，可选)
-│   ├── 推荐工具:sch_PrimitiveComponent$modify,sch_PrimitivePolygon$delete,
-│   │            sch_PrimitivePolygon$create
-│   ├── 规则:
-│   │   ├── 移动元件时需要连同边界多边形一起移动
-│   │   │   └── 先删除旧边界，移动元件，再重新绘制边界
-│   │   ├── 如果修改位置，必须检查是否在画布范围内
-│   │   └── 仅在碰撞检测失败时执行
-│   └── 检查点:移动元件完成(可选)- 如有碰撞，已调整元件位置
-│
-├── 节点9:draw_bounds(边界绘制)
-│   ├── 推荐工具:sch_PrimitivePolygon$create
-│   ├── 规则:
-│   │   ├── 所有元件放置并检测通过后，统一绘制边界多边形
-│   │   ├── 边界转闭合格式:[x1,y1,x2,y2,x3,y3,x4,y4,x1,y1](首尾点必须相同)
-│   │   ├── 使用虚线样式(lineType: DASHED，值为1)，线宽1
-│   │   ├── line数组长度必须≥8且为偶数(至少4个点)，必须闭合
-│   │   └── lineType枚举值:0:实线,1:虚线,2:点划线,3:点线
-│   └── 检查点:边界绘制完成(必需)- 已绘制所有元件边界多边形
-│
-└── 节点10:validation(验证)
-    ├── 推荐工具:sch_PrimitiveComponent$getAll,calculateComponentBounds,
-    │            sch_PrimitiveWire$getAll
-    ├── 规则:
-    │   ├── 验证所有元件放置符合规范(间距、布局、边界)
-    │   └── 检查所有检查点是否通过
-    └── 检查点:验证通过(必需)- 所有元件放置符合规范
+┌──────────────────────────────────────────────────────────────┐
+│  嘉立创 EDA 专业版（宿主环境，提供 eda.* 原生 API）            │
+│                                                                │
+│  src/index.ts  (扩展入口)                                      │
+│    ├─ about()            → 关于弹窗                            │
+│    └─ openAiChat()       → eda.sys_IFrame.openIFrame(         │
+│                            '/iframe/ai-chat.html', 800, 600)   │
+└───────────────────────────────┬────────────────────────────────┘
+                                 │ 打开 iframe
+                                 ▼
+┌──────────────────────────────────────────────────────────────┐
+│  iframe/ai-chat.html  (对话界面)                               │
+│   按序加载脚本：                                               │
+│   1. ark-api.js      → window.ArkAPI   对话后端（ARK / 私服）  │
+│   2. mcp-prompt.js   → window.promptList 三层框架提示词       │
+│   3. eda-api.js      → window.jdbToolDescriptions 原生API清单 │
+│   4. mcp-eda.js      → window.mcpEDA(MCP封装)                 │
+│                       window.customeTools(自定义工具实现)      │
+│   5. ai-chat.js      → 主控制器（UI / 对话流 / 执行流）        │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### 2.3 工作流:布线设计流程 (workflow_wiring_design)
+**数据流向（一次"放置元件"任务为例）：**
 
 ```
-布线设计流程
-│
-├── 节点1:wiring_planning(布线规划)
-│   ├── 推荐工具:sch_PrimitiveComponent$getAll,sch_PrimitiveWire$getAll
-│   ├── 规则:
-│   │   ├── 识别关键信号(电源/地/时钟)，关键信号优先布线
-│   │   └── 按输入→处理→输出规划顺序
-│   └── 检查点:布线规划完成(必需)- 已识别关键信号，按输入→处理→输出规划顺序
-│
-├── 节点2:obstacle_analysis(障碍物分析)
-│   ├── 推荐工具:getCanvasSize,sch_PrimitiveComponent$getAll,
-│   │            sch_PrimitiveComponent$getAllPinsByPrimitiveId,
-│   │            calculateComponentBounds,sch_PrimitiveWire$getAll
-│   ├── 规则:
-│   │   ├── 必须获取画布大小(画布-导线间距≥10mil，默认12mil)
-│   │   ├── 必须获取所有元件列表及其引脚坐标
-│   │   ├── 必须获取各个元件的边界信息(通过引脚列表计算边界)
-│   │   ├── 必须获取所有现有导线的路径信息
-│   │   └── 构建障碍物地图:
-│   │       ├── 元件边界及安全区域(禁止导线穿越)
-│   │       └── 现有导线路径及安全区域(禁止导线穿越)
-│   └── 检查点:障碍物分析完成(必需)- 已获取所有信息，已构建障碍物地图
-│
-├── 节点3:path_calculation_collision(路径计算与碰撞检测)
-│   ├── 推荐工具:无(纯算法计算)
-│   ├── 规则:
-│   │   ├── 使用A*算法进行路径搜索，在障碍物地图上进行计算
-│   │   ├── 必须先根据元件的引脚列表获取边界再进行计算
-│   │   ├── 实时碰撞检测(路径计算过程中必须检查):
-│   │   │   ├── 新导线路径与画布边界的距离符合规范(≥10mil，默认12mil)
-│   │   │   ├── 新导线路径与元件边界的距离符合规范(≥6mil，默认8mil)
-│   │   │   ├── 新导线路径与其他导线的距离符合规范(≥6mil，默认8mil)
-│   │   │   └── 新导线路径与引脚的距离符合规范(≥6mil，默认8-10mil)
-│   │   ├── 识别90°拐点，替换为两段45°走线
-│   │   ├── 算法参数:距离权重 + 拐点罚分 + 碰撞罚分
-│   │   ├── 如有碰撞，调整路径或重新规划，最多重试3次
-│   │   └── 纯算法计算，不调用工具
-│   └── 检查点:路径计算与碰撞检测完成(必需)- 已使用A*算法，路径计算过程中实时碰撞检测通过
-│
-├── 节点4:wire_creation(导线创建)
-│   ├── 推荐工具:sch_PrimitiveWire$create,sch_PrimitiveWire$delete
-│   ├── 规则:
-│   │   ├── 如果需要与旧导线连接，则删除旧导线，然后创建新导线
-│   │   ├── 标准:优先45°走线，禁止锐角
-│   │   ├── line 参数必须为连续坐标数组(长度为偶数且不少于4)
-│   │   ├── line 中的所有 x,y 不能超过画布边界
-│   │   ├── color 可以不传，但必须不能为null或undefined
-│   │   └── lineType 默认值为0(实线)
-│   └── 检查点:导线创建完成(必需)- 导线已成功创建(优先45°走线，禁止锐角)
-│
-└── 节点5:validation(验证)
-    ├── 推荐工具:sch_PrimitiveWire$getAll,sch_PrimitiveComponent$getAll,
-    │            calculateComponentBounds
-    ├── 规则:
-    │   ├── 验证所有导线符合规范(间距、路径、角度)
-    │   └── 检查所有检查点是否通过
-    └── 检查点:验证通过(必需)- 所有导线符合规范(间距、路径、角度)
+用户输入
+  → ai-chat.js 构造 messages（含 system_message）
+  → ArkAPI.callArkChat / callPrivateChat
+       → 火山引擎 Responses API / 私服 /api/ark-chat
+  ← 返回 output（含 message + function_call）
+  → parseAIResponse 解析出 toolCalls
+  → generateCodeFromToolCalls 生成 mcpEDA.callTool({...}) 代码块
+  → 界面展示"确认执行"按钮
+  →（用户点击）executeToolCalls
+       → window.mcpEDA.callTool
+            → 解析 name(className.methodName)
+            → 命中 window.customeTools 或 eda[className][methodName]
+            → 调用原生 eda.* API 落地到画布
+  ← 返回执行结果（function_call_output）
+  → continueConversationAfterTools 把结果回传模型，模型给出最终说明
 ```
 
-### 2.4 工作流:验证优化流程 (workflow_validation_optimization)
+### 3.2 扩展入口（src/index.ts）
 
-```
-验证优化流程
-│
-├── 节点1:design_check(设计检查)
-│   ├── 推荐工具:sch_PrimitiveComponent$getAll,sch_PrimitiveWire$getAll,getCanvasSize
-│   ├── 规则:
-│   │   ├── 检查所有元件和导线
-│   │   └── 获取画布大小
-│   └── 检查点:设计检查完成(必需)- 已检查所有元件和导线
-│
-├── 节点2:spec_validation(规范验证)
-│   ├── 推荐工具:sch_PrimitiveComponent$getAllPinsByPrimitiveId,
-│   │            calculateComponentBounds,sch_PrimitiveWire$getAll
-│   ├── 规则:
-│   │   ├── 验证所有间距标准(必须检查所有间距):
-│   │   │   ├── 画布-元件间距≥10mil(默认12mil)
-│   │   │   ├── 画布-导线间距≥10mil(默认12mil)
-│   │   │   ├── 元件-元件边界间距≥80mil(不能使用中心点计算)
-│   │   │   ├── 元件-导线边界间距≥6mil(默认8mil)
-│   │   │   ├── 导线-导线间距≥6mil(默认8mil)
-│   │   │   ├── 导线-元件边界间距≥6mil(默认8mil)
-│   │   │   └── 导线-引脚间距≥6mil(默认8-10mil)
-│   │   └── 验证布局规划:
-│   │       ├── 功能分组(按电源/信号/控制/接口等模块集中摆放)
-│   │       ├── 流向布局(按输入→处理→输出的信号流向摆放)
-│   │       └── 网络标签优先(相同网络标签优先用标签替代跨图直线)
-│   └── 检查点:规范验证通过(必需)- 所有间距、布局符合规范
-│
-├── 节点3:optimization_suggestion(优化建议，可选)
-│   ├── 推荐工具:readResource,listResources
-│   ├── 规则:
-│   │   ├── 应基于规范源码(standardCode1/2/3)和业界最佳实践
-│   │   ├── 注意:规范源码非常庞大，不应该频繁调用
-│   │   └── 生成优化建议(如有)
-│   └── 检查点:优化建议完成(可选)- 已生成优化建议(如有)
-│
-├── 节点4:optimization_execution(优化执行，可选)
-│   ├── 推荐工具:sch_PrimitiveComponent$modify,sch_PrimitiveWire$modify,
-│   │            sch_PrimitiveWire$delete
-│   ├── 规则:
-│   │   ├── 必须保持设计功能不变
-│   │   ├── 优化后必须重新验证所有间距标准
-│   │   └── 执行优化操作(如有)
-│   └── 检查点:优化执行完成(可选)- 已执行优化操作(如有)
-│
-└── 节点5:final_validation(最终验证)
-    ├── 推荐工具:sch_PrimitiveComponent$getAll,sch_PrimitiveWire$getAll
-    ├── 规则:
-    │   ├── 必须确保所有规范都符合(间距、布局、布线)
-    │   └── 最终验证所有检查点
-    └── 检查点:最终验证通过(必需)- 设计完全符合规范
-```
+- `activate()`：空实现（按需激活，无需启动逻辑）。
+- `about()`：调用 `eda.sys_Dialog.showInformationMessage` 显示版本号（来自 `extension.json`）。
+- `openAiChat()`：调用 `eda.sys_IFrame.openIFrame('/iframe/ai-chat.html', 800, 600, 'ai-chat-dialog', { maximizeButton, minimizeButton, grayscaleMask })` 打开对话窗口。
 
-### 2.5 工作流:选择和交互流程 (workflow_selection_interaction)
+菜单注册见 `extension.json` 的 `headerMenus`，在 `home` / `sch` / `pcb` 三个上下文均挂载 **AI巧绘** 菜单，含 `About...`（`about`）与 `原理图设计助手`（`openAiChat`）。
 
-```
-选择和交互流程
-│
-├── 流程描述:感知用户已选择的图元，结合用户意图进行操作，使AI助手能够理解用户当前选中的元件并执行相应操作
-│
-├── 核心原则:
-│   - AI助手应首先获取用户当前已选中的图元，然后结合用户的意图对这些图元进行操作
-│   - 用户通过鼠标选择图元后，AI助手应能感知到这些选择，并据此执行操作
-│
-├── 节点序列:
-│   1. get_user_selection(获取用户选择)
-│   2. understand_user_intent(理解用户意图)
-│   3. operate_on_selection(对选中图元执行操作)
-│   4. interaction_feedback(交互反馈)
-│
-├── 节点规则:
-│   - get_user_selection:
-│     * 推荐工具:sch_SelectControl$getAllSelectedPrimitives,sch_SelectControl$getCurrentMousePosition
-│     * 规则:首先获取用户当前已选中的图元列表(使用sch_SelectControl$getAllSelectedPrimitives);如果用户没有选中图元，可以询问用户后继续;必须明确当前有哪些图元被用户选中
-│     * 检查点:获取用户选择完成(必需)- 已获取用户当前选中的图元列表，或已确认用户未选中任何图元
-│
-│   - understand_user_intent:
-│     * 推荐工具:无
-│     * 规则:结合用户已选中的图元，理解用户的操作意图;分析用户想要对这些选中图元执行什么操作(如:修改属性、移动位置、删除、布线等);如果用户未选中图元，应提示用户先选择图元
-│     * 检查点:理解用户意图完成(必需)- 已理解用户对选中图元的操作意图，或已提示用户先选择图元
-│
-│   - operate_on_selection:
-│     * 推荐工具:sch_PrimitiveComponent$modify,sch_PrimitiveComponent$delete,sch_PrimitiveWire$create,sch_PrimitiveComponent$getAllPinsByPrimitiveId,calculateComponentBounds,sch_SelectControl$clearSelected
-│     * 规则:根据用户意图，对用户已选中的图元执行相应操作;操作前应验证选中图元的有效性;操作完成后可以清除选择状态(使用sch_SelectControl$clearSelected);支持的操作包括但不限于:修改属性、移动位置、删除、获取引脚信息、计算边界、创建连接等
-│     * 检查点:操作执行完成(必需)- 已根据用户意图对选中图元执行相应操作
-│
-│   - interaction_feedback:
-│     * 推荐工具:dmt_EditorControl$zoomToSelectedPrimitives
-│     * 规则:提供交互反馈(高亮/缩放等);使用dmt_EditorControl$zoomToSelectedPrimitives缩放到选中图元，提供视觉反馈
-│     * 检查点:交互反馈完成(可选)- 已提供交互反馈
-│
-└── 重要提示:
-    - 本流程的核心是"感知用户已选择的图元"，AI助手应主动调用sch_SelectControl$getAllSelectedPrimitives获取用户当前选中的图元
-    - 如果用户未选中任何图元，AI助手应提示用户先选择图元，而不是主动选择图元
-    - 只有在用户明确要求选择特定图元时，才使用sch_SelectControl$doSelectPrimitives主动选择图元
-    - 操作完成后，可以使用dmt_EditorControl$zoomToSelectedPrimitives提供视觉反馈
-```
+### 3.3 模块职责划分
+
+| 文件 | 全局对象 | 职责 |
+| --- | --- | --- |
+| `ai-chat.html` | — | 页面骨架、DOM 容器、按序引入脚本 |
+| `ai-chat.css` | — | 全部界面样式（气泡、加载动画、代码块、对话框） |
+| `ai-chat.js` | — | 主控制器：UI 状态机、对话流、工具调用代码生成、确认执行、停止/清空 |
+| `ark-api.js` | `window.ArkAPI` | 两个对话后端：`callArkChat`（直连 ARK）、`callPrivateChat`（私服）；`updateConfig`/`getConfig` |
+| `mcp-prompt.js` | `window.promptList` | 三层框架提示词（系统角色、工作流、业务规则、执行模式） |
+| `eda-api.js` | `window.jdbToolDescriptions` | 自动生成的全量原生 EDA API 工具清单（约 17900 行，供 `searchTools` 检索） |
+| `mcp-eda.js` | `window.mcpEDA`<br>`window.customeTools` | MCP 协议封装（callTool/listTools/...）；`customeTools` 为针对原理图场景封装的具体工具实现 |
+
+### 3.4 三层执行框架（mcp-prompt.js → window.promptList）
+
+系统消息（`system_message`）定义了"规则约束 + 流程引导 + 智能执行"的三层架构，模型通过 `getPrompt` 工具**按需**拉取对应提示词（避免一次性注入浪费 Token）。
+
+**第一层 · 规则约束层（`business_rules_*`）**
+
+- `business_rules_spacing`：间距标准（画布-元件 ≥10mil、元件-元件 ≥80mil、导线-导线 ≥6mil 等，均基于边界而非中心点计算）。
+- `business_rules_layout`：布局策略（功能分组、输入→处理→输出流向、网络标签优先）。
+- `business_rules_wiring`：布线规则（A* 寻路、45° 优先禁锐角、障碍绕行、关键信号优先）。
+- `business_rules_tools`：各工具调用的特殊注意事项（如 `subPartName` 必填、`invertY` 默认 `true`）。
+- `business_rules_collision`：统一图元碰撞检测机制与重试（最多 3 次）。
+
+**第二层 · 流程引导层（`workflow_*`）**
+
+- `workflow_requirement_analysis`：需求理解 → 确认 → 流程选择。
+- `workflow_component_design`：搜索 → 选择 → 布局 → 放置 → 取引脚 → 算边界 → 碰撞检测 → 移动 → 画边界 → 验证（10 个节点）。
+- `workflow_wiring_design`：规划 → 障碍分析 → A* 寻路+碰撞 → 创建导线 → 验证。
+- `workflow_validation_optimization`：设计检查 → 规范验证 → 优化建议/执行 → 最终验证。
+- `workflow_selection_interaction`：感知用户已选中图元并结合意图操作。
+
+**第三层 · 智能执行层（`execution_*`）**
+
+- `execution_mode_react`：ReAct（思考-行动-观察）模式。
+- `execution_mode_plan`：Plan（规划-执行-验证-调整）模式。
+- `execution_guidance`：总指导原则（按需求自主选工作流、按需 `getPrompt` 取规则、执行后自检检查点）。
+
+> 注：`execution_guidance` 文本中提及了 `workflow_library_management`、`workflow_drc_check`、`workflow_manufacture_data_export` 等更多工作流名称，但当前 `promptList` 尚未全部定义，属于预留扩展点。
+
+### 3.5 工具系统（MCP 封装 + 自定义工具）
+
+**原生 API 清单**：`eda-api.js` 导出 `window.jdbToolDescriptions`，是自动生成的全部 `eda.*` 原生 API 描述（含 name/description/inputSchema）。它被 `searchTools`（在 `customeTools` 中）用于按关键词检索原生 API。
+
+**MCP 元工具**（`window.mcpEDA.toolDescriptions`，随对话注入模型）：
+`callTool`、`listTools`、`listResources`、`readResource`、`listPrompts`、`getPrompt` 共 6 个通用工具。模型通过它们间接操作原理图与获取提示。
+
+**自定义工具**（`window.customeTools.*` + `window.customeTools.toolDescriptions`）：针对原理图设计的高频操作做了封装与安全校验，命名风格为 `类名$方法名`（如 `sch_PrimitiveComponent$create`）。核心类别：
+
+- 元件：`lib_Device$search`、`sch_PrimitiveComponent$create`、`sch_PrimitiveComponent$createBatch`、`sch_PrimitiveComponent$getAll`、`sch_PrimitiveComponent$modify`、`sch_PrimitiveComponent$delete`、`sch_PrimitiveComponent$getAllPinsByPrimitiveId(Batch)`。
+- 导线：`sch_PrimitiveWire$create(Batch)`、`sch_PrimitiveWire$modify`、`sch_PrimitiveWire$delete`、`sch_PrimitiveWire$getAll`。
+- 多边形（边界）：`sch_PrimitivePolygon$create(Batch)`、`sch_PrimitivePolygon$delete`、`sch_PrimitivePolygon$getAll`。
+- 几何辅助：`calculateComponentBounds(Batch)`（按引脚计算元件最小外接矩形）、`getCanvasSize`（读取画布边界，默认 1170×825 mil）。
+- 选择/交互：`sch_SelectControl$getAllSelectedPrimitives/doSelectPrimitives/clearSelected/getCurrentMousePosition`、`dmt_EditorControl$zoomToSelectedPrimitives`。
+- 文档：`sys_FileManager$getDocumentFootprintSources`、`searchTools`。
+
+**工具调用解析**（`mcp-eda.js` → `callTool`）：
+- 输入 `name` 形如 `className.methodName`；内部用 `name.replace('.', '$')` 兼容自定义工具命名。
+- 解析优先级：`window.mcpEDA[name]` → `window.customeTools[mname]` → `eda[className][methodName]`。
+- 参数校验基于 JSON Schema（`validateArguments`），返回统一 MCP 格式 `{ content:[{type:'text',text}], isError }`。
+
+### 3.6 对话状态机（ai-chat.js → UI_STATE）
+
+界面用 `UI_STATE` 枚举管理按钮与输入可用性：
+
+| 状态 | 输入框/发送 | 停止按钮 | 清空 | 自动执行 | 配置 |
+| --- | --- | --- | --- | --- | --- |
+| `IDLE` 空闲 | 可用 | 隐藏 | 可用 | 可用 | 可用 |
+| `SENDING` 发送中 | 禁用 | 显示 | 禁用 | 可用 | 可用 |
+| `STOPPED` 停止中 | 禁用 | 隐藏 | 禁用 | 禁用(并取消选中) | 可用 |
+| `EXECUTING` 执行中 | 禁用 | 显示 | 禁用 | 可用 | 可用 |
+
+### 3.7 多轮对话与 Responses API
+
+- 直连 ARK 使用 `https://ark.cn-beijing.volces.com/api/v3/responses`。
+- 请求参数：`model`、`input`（默认仅最后一条消息）、`store:true`、`caching:{type:"enabled"}`、`temperature:0.2`、`top_p:0.9`。
+- 多轮上下文靠 `previous_response_id` 串联（首轮且历史长度为 2 时直接把整段历史作为 `input`）；每轮累加 `total_tokens` 并打印对话历史到控制台。
+- 工具结果以 `function_call_output`（含 `call_id`/`output`）形式回传，符合 Responses API 规范。
+
+### 3.8 双后端设计（ark-api.js）
+
+| 维度 | ARK 直连 `callArkChat` | 私服 `callPrivateChat` |
+| --- | --- | --- |
+| 地址 | `ARK_API_URL=/api/v3` | `PRIVATE_SERVER_URL`（默认 `https://113.46.209.138`，可 `localStorage.private_server_url` 覆盖）+ `/api/ark-chat` |
+| 鉴权 | `Authorization: Bearer <api_key>`，需 `api_model` | 仅 `user_api_key`，私服转发并记账 |
+| 模型 | 必须配置 `api_model` | 由私服侧决定，前端无需 model |
+| 登录入口 | 火山引擎官网 | 配置框内"私服登录"链接指向 `https://113.46.209.138/login` |
+
+切换逻辑（`ai-chat.js`）：`usePrivateServer` 为真时调用 `callPrivateChat`，否则 `callArkChat`。启用私服时隐藏 Model 输入框。
 
 ---
 
-## 🟡 第三层:智能执行层 (Execution Layer)
+## 四、实现
 
-### 3.1 执行模式:ReAct (execution_mode_react)
+### 4.1 配置与持久化
 
-```
-ReAct (Reasoning + Acting) 执行模式
-│
-├── 执行步骤
-│   ├── 1. 思考 (Think): 分析当前任务和状态
-│   ├── 2. 行动 (Act): 选择合适的工具执行操作
-│   ├── 3. 观察 (Observe): 分析工具执行结果
-│   ├── 4. 思考 (Think): 根据结果决定下一步
-│   └── 5. 重复步骤2-4，直到任务完成
-│
-└── 适用场景
-    ├── 需要逐步探索和试错的任务
-    ├── 不确定具体执行路径的任务
-    └── 需要根据中间结果调整策略的任务
-```
+`localStorage` 键：`api_key`、`api_model`、`use_private_server`、`private_server_url`。
+- `loadConfig()`：页面初始化时读取并调用 `ArkAPI.updateConfig`。
+- `handleSaveConfig()`：保存并即时生效。
+- 系统消息来自 `window.top.systemMessage = promptList.find('system_message')...text`，用户可在控制台临时改写以定制 AI 角色。
 
-### 3.2 执行模式:Plan (execution_mode_plan)
+### 4.2 对话主流程（ai-chat.js）
 
-```
-Plan (Planning + Execution) 执行模式
-│
-├── 执行步骤
-│   ├── 1. 规划 (Plan): 制定详细的执行计划
-│   │   ├── 工作流选择(根据用户需求，自主判断应该执行哪个工作流)
-│   │   ├── 节点序列(按照工作流节点顺序执行)
-│   │   ├── 工具调用顺序(根据当前工作流和节点选择合适的工具)
-│   │   └── 检查点验证(执行完每个节点后，自行验证检查点是否通过)
-│   ├── 2. 执行 (Execute): 按照计划逐步执行
-│   ├── 3. 验证 (Verify): 验证每个检查点
-│   ├── 4. 调整 (Adjust): 根据实际情况调整计划
-│   └── 5. 重复步骤2-4，直到任务完成
-│
-└── 适用场景
-    ├── 复杂任务需要整体规划
-    ├── 需要确保所有检查点都通过的任务
-    └── 需要按照标准流程执行的任务
-```
+1. `handleSendMessage` → `runSendFlow`：切换 `SENDING` 状态、写历史、加加载动画、调 `callAIAndHandleResponse`。
+2. `callAIAndHandleResponse`：确保 system 消息存在（`ensureSystemMessage`），调用后端，解析响应；若有 `function_call` 则 `generateCodeFromToolCalls` 生成代码块。
+3. `generateCodeFromToolCalls`：把每个工具调用渲染为 `mcpEDA.callTool({ name, arguments })`；多调用时拼成结果数组。
+4. `createToolCallCodeBlock`：在界面展示代码块与"确认执行"按钮；若开启"自动执行"（`autoExecWriteEnabled`），2 秒后自动点击。
+5. 用户确认 → `executeToolCallsAndContinue` → `executeSingleToolCall`（经 `mcpEDA.callTool` 落地原生 API）→ `handleToolExecutionResults`（展示结果并构造 `function_call_output`）→ `continueConversationAfterTools`（把结果回传模型，进入下一轮或收尾）。
 
-### 3.3 执行指导原则 (execution_guidance)
+### 4.3 安全与可控机制
 
-```
-执行指导原则
-│
-├── 重要提示
-│   ├── 1. 根据用户需求，自主判断应该执行哪个工作流(禁止通过字符串匹配工作流)
-│   ├── 2. 建议按照工作流节点顺序执行，每个节点都有明确的规则和推荐工具
-│   ├── 3. 所有工具都可以调用，但请根据当前工作流和节点选择合适的工具
-│   ├── 4. 执行完每个节点后，请自行验证检查点是否通过
-│   ├── 5. 如果遇到问题，请参考工作流规则和业务规范进行调整
-│   └── 6. 在规则框架内，你可以创新和优化执行方式
-│
-└── 规则获取策略
-    ├── 使用 getPrompt 工具按需获取规则，不要一次性获取所有规则(避免token浪费)
-    ├── 根据当前任务阶段，获取相关的业务规则
-    │   ├── spacing(间距标准)
-    │   ├── layout(布局策略)
-    │   ├── wiring(布线规则)
-    │   ├── tools(工具要求)
-    │   └── collision(碰撞检测)
-    ├── 根据当前工作流，获取对应的工作流定义
-    │   ├── workflow_requirement_analysis(需求分析)
-    │   ├── workflow_component_design(元件设计)
-    │   ├── workflow_wiring_design(布线设计)
-    │   ├── workflow_validation_optimization(验证优化)
-    │   └── workflow_selection_interaction(选择交互)
-    └── 根据执行方式，获取执行模式指导
-        ├── react(ReAct模式)
-        └── plan(Plan模式)
+- **确认执行**：所有工具调用默认生成代码块，需手动点击"确认执行"才会调用原生 API（写操作不自动落地）。
+- **自动执行开关**：右上角"自动执行"复选框，开启后延迟 2 秒自动执行（停止后会自动取消选中态）。
+- **停止**：`handleStop` 设置 `isStop`，清空 `activeTimeouts` 与 `activeApiPromises`；无在途请求立即恢复空闲，否则等当前请求完成后由 `resumeStop` 恢复。
+- **边界校验**：`customeTools` 中各创建/修改工具均调用 `getCanvasSize` 校验坐标不越界；间距规范由 AI 在框架提示中遵循并利用 `calculateComponentBounds` 计算。
 
-规则获取示例:
-  - 开始元件设计时:getPrompt({name: 'workflow_component_design'})
-  - 需要检查间距时:getPrompt({name: 'business_rules_spacing'})
-  - 需要布局规划时:getPrompt({name: 'business_rules_layout'})
-  - 需要布线时:getPrompt({name: 'business_rules_wiring'})
-  - 需要工具调用时:getPrompt({name: 'business_rules_tools'})
-  - 需要碰撞检测时:getPrompt({name: 'business_rules_collision'})
-```
+### 4.4 错误处理
+
+- `parseAIResponse` 对格式异常返回固定提示文案。
+- `callTool` 用 `try/catch` 包装，错误以 MCP 格式 `isError:true` 返回，并在对话气泡以红色样式展示（`handleAIError`）。
+- API 失败统一走 `handleAIError` 并恢复 `IDLE` 状态。
+
+### 4.5 资源（Resource）能力说明
+
+`window.mcpEDA.listResources`/`readResource` 引用了 `window.jdbResourceList`，但当前 `iframe/` 内未定义该变量（规范源码 `standardCode1/2/3` 仅在提示词中被引用）。即资源读取相关工具目前为预留能力，调用会返回空/异常，属已知扩展点。
 
 ---
 
-## 🔄 工作流执行流程图
+## 五、测试
 
-```
-用户需求
-    ↓
-┌─────────────────────┐
-│  需求分析工作流       │
-│  - 需求理解          │
-│  - 需求确认          │
-│  - 流程选择          │
-└─────────────────────┘
-    ↓
-    ├──→ 元件设计工作流
-    │   ├── 元件搜索
-    │   ├── 元件选择
-    │   ├── 布局规划
-    │   ├── 元件放置
-    │   ├── 获取引脚坐标
-    │   ├── 计算边界
-    │   ├── 碰撞检测
-    │   ├── 移动元件(可选)
-    │   ├── 边界绘制
-    │   └── 验证
-    │
-    ├──→ 布线设计工作流
-    │   ├── 布线规划
-    │   ├── 障碍物分析
-    │   ├── 路径计算与碰撞检测
-    │   ├── 导线创建
-    │   └── 验证
-    │
-    └──→ 验证优化工作流
-        ├── 设计检查
-        ├── 规范验证
-        ├── 优化建议(可选)
-        ├── 优化执行(可选)
-        └── 最终验证
+本插件以**手动/场景化测试**为主（无自动化单元测试）：
 
-    ├──→ 库管理工作流
-    │   ├── 库选择
-    │   ├── 库内容搜索
-    │   ├── 库内容选择
-    │   ├── 库内容创建/修改
-    │   └── 库内容验证
-    │
-    ├──→ 文档工程管理工作流
-    │   ├── 工程选择/创建
-    │   ├── 文档创建/打开
-    │   ├── 文档操作
-    │   └── 文档保存
-    │
-    ├──→ 图形标注工作流
-    │   ├── 图形类型选择
-    │   ├── 位置规划
-    │   ├── 图形创建
-    │   ├── 图形属性设置
-    │   └── 图形验证
-    │
-    ├──→ 网络端口管理工作流
-    │   ├── 网络分析
-    │   ├── 标识类型选择
-    │   ├── 标识创建
-    │   └── 标识验证
-    │
-    ├──→ 网表操作工作流
-    │   ├── 网表获取
-    │   ├── 网表分析
-    │   ├── 网表更新/对比
-    │   └── 网表验证
-    │
-    ├──→ DRC检查工作流
-    │   ├── DRC配置
-    │   ├── DRC执行
-    │   ├── 错误分析
-    │   ├── 错误修复
-    │   └── 重新检查
-    │
-    ├──→ 制造数据导出工作流
-    │   ├── 数据需求分析
-    │   ├── 数据格式选择
-    │   ├── 数据导出
-    │   └── 数据验证
-    │
-    └──→ 选择交互工作流
-        ├── 获取用户选择
-        ├── 理解用户意图
-        ├── 对选中图元执行操作
-        └── 交互反馈
-```
+1. **导入与入口**：本地导入 `./build/dist/` 扩展包，在 Home/Sch/PCB 菜单确认"AI巧绘"可见，`原理图设计助手` 能打开对话框。
+2. **配置**：填写 ARK `api_key`/`api_model` 或开启"私服"并登录；确认刷新后配置保留。
+3. **问答**：输入原理图设计问题，确认多轮上下文连续、`total_tokens` 累加。
+4. **工具读取**：在原理图选中元件后问"查询该元件引脚"，确认 AI 调用 `sch_SelectControl$getAllSelectedPrimitives`/`getAllPinsByPrimitiveId` 并正确返回。
+5. **写操作确认**：下达"放置一个电阻"，确认先展示代码块，点击"确认执行"后画布出现元件；开启"自动执行"后 2 秒自动落地。
+6. **停止/清空**：生成中点击"停止"可中断；"清空"可重置对话（保留欢迎语）。
+7. **边界与间距**：尝试越界坐标，确认被 `getCanvasSize` 校验拦截。
 
 ---
 
-## 📋 重要执行原则总结
+## 六、总结
 
-1. **自主判断工作流**:根据用户需求自主判断应该执行哪个工作流
-2. **按需获取规则**:使用 getPrompt 工具按需获取规则，根据当前任务阶段获取相关的业务规则和工作流定义
-3. **按节点顺序执行**:建议按照工作流节点顺序执行，每个节点都有明确的规则和推荐工具
-4. **验证检查点**:执行完每个节点后，请验证检查点是否通过
-5. **规则框架内创新**:在规则框架内，可以创新和优化执行方式
+**设计亮点**
+- 以 MCP 风格统一封装原生 `eda.*` API，工具可被发现、校验、调用，结构清晰、易扩展。
+- "三层执行框架 + 按需 `getPrompt`"把规范约束注入大模型，兼顾可控性与灵活性，避免一次性注入大段提示浪费 Token。
+- 直连/私服双后端解耦 Token 计费，降低使用门槛。
+- "代码块确认执行 + 自动执行开关 + 停止"三重安全机制，保障对设计文件的写操作可控。
 
----
-
-## 🛠️ 工具调用规范
-
-### 常用工具分类
-
-```
-工具分类
-├── 元件相关工具
-│   ├── lib_Device$search(元件搜索)
-│   ├── sch_PrimitiveComponent$create(创建元件)
-│   ├── sch_PrimitiveComponent$modify(修改元件)
-│   ├── sch_PrimitiveComponent$getAll(获取所有元件)
-│   └── sch_PrimitiveComponent$getAllPinsByPrimitiveId(获取引脚坐标)
-│
-├── 导线相关工具
-│   ├── sch_PrimitiveWire$create(创建导线)
-│   ├── sch_PrimitiveWire$modify(修改导线)
-│   ├── sch_PrimitiveWire$delete(删除导线)
-│   └── sch_PrimitiveWire$getAll(获取所有导线)
-│
-├── 多边形相关工具
-│   ├── sch_PrimitivePolygon$create(创建多边形)
-│   └── sch_PrimitivePolygon$delete(删除多边形)
-│
-├── 画布相关工具
-│   └── getCanvasSize(获取画布大小)
-│
-├── 计算工具
-│   └── calculateComponentBounds(计算元件边界)
-│
-└── 系统工具
-    ├── listTools(列出所有工具)
-    ├── listResources(列出所有资源)
-    ├── getPrompt(获取提示规则)
-    └── readResource(读取资源)
-```
+**已知局限 / 后续可优化**
+- `window.jdbResourceList` 未定义，资源类工具暂不可用。
+- 注入模型的仅 6 个通用 MCP 元工具，自定义工具的具体参数 Schema 主要靠提示词文本描述，模型对参数结构依赖"从工作流提示中识别工具名 + `callTool` 传参"，可进一步优化为直接把 `customeTools.toolDescriptions` 注入函数调用。
+- `execution_guidance` 引用的部分工作流尚未在 `promptList` 中定义。
+- 自动执行注释写"5 秒"而实际 `setTimeout` 为 2000ms（以代码为准）。
 
 ---
 
-## 📊 检查点验证体系
-
-每个工作流节点都包含明确的检查点，确保执行质量:
-
-- **必需检查点**:必须通过才能进入下一节点
-- **可选检查点**:根据实际情况决定是否执行
-
-检查点验证原则:
-1. 每个节点执行完成后，立即验证对应的检查点
-2. 如果检查点未通过，需要重新执行或调整
-3. 所有必需检查点通过后，才能进入下一节点
-4. 最终验证时，需要验证所有检查点
-
----
-
-## 🎯 总结
-
-本AI执行框架采用**三层架构**设计:
-
-1. **规则约束层**:提供业务规则和标准规范，确保设计符合要求
-2. **流程引导层**:定义工作流程和节点序列，指导执行路径
-3. **智能执行层**:提供执行模式和指导原则，支持灵活执行
-
-通过**按需获取规则**、**按节点顺序执行**、**验证检查点**等机制，确保AI助手能够在预设路径内高效运作，同时保持必要的灵活性，实现高质量的嘉立创EDA原理图设计。
-
+*文档整理自插件源码，如需对接私服或扩展新工具，请参考 `iframe/mcp-eda.js`（新增 `customeTools` 实现并登记到 `toolDescriptions`）、`iframe/mcp-prompt.js`（新增 `promptList` 提示）与 `iframe/ark-api.js`（后端适配）。*

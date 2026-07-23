@@ -11,3 +11,4 @@ debug.log
 /logs/*
 /readmes/
 /ai_schematic_private/
+/.*

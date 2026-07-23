@@ -1141,83 +1141,16 @@ function handleSaveConfig() {
 }
 
 /**
- * 设置私服链接，传递用户信息
+ * 设置私服链接
+ * 私服采用独立的用户名+密码登录体系，不依赖嘉立创平台用户信息
+ * 链接直接指向私服登录页，用户在私服页面手动输入用户名密码登录
  */
-async function setupPrivateServerLink() {
+function setupPrivateServerLink() {
 	const privateServerLink = document.getElementById('privateServerLink'); // 获取私服链接元素
 	if (!privateServerLink) return; // 如果元素不存在，直接返回
 
-	let uinfo = ''; // 用户信息参数
-	try {
-		// 1. 从 localStorage 读取用户登录信息
-		const isLogin = localStorage.getItem('isLogin'); // 读取登录信息
-		
-		// 2. 检查是否已登录
-		if (!isLogin) {
-			console.warn('[私服链接] 用户未登录，localStorage 中无 isLogin 信息');
-			privateServerLink.href = 'https://113.46.209.138/login';
-			return;
-		}
-
-		const loginData = JSON.parse(isLogin); // 解析 JSON 字符串
-		
-		// 3. 验证登录数据完整性
-		if (!loginData.uuid || !loginData.username) {
-			console.error('[私服链接] 登录数据不完整:', loginData);
-			alert('登录信息不完整，请重新登录');
-			privateServerLink.href = 'https://113.46.209.138/login';
-			return;
-		}
-
-		// 4. 尝试从 LCEDA API 获取完整用户信息
-		let lcedaUserInfo = {};
-		try {
-			const response = await fetch('https://u.lceda.cn/api/user', {
-				credentials: 'include' // 携带 cookie
-			}); // 调用 LCEDA API
-			
-			// 5. 检查 HTTP 状态码
-			if (!response.ok) {
-				throw new Error(`LCEDA API 返回 ${response.status} ${response.statusText}`);
-			}
-			
-			const data = await response.json(); // 解析响应
-			
-			// 6. 检查 API 业务逻辑是否成功
-			if (data.success !== true || data.code !== 0) {
-				throw new Error(data.message || `LCEDA API 返回 code: ${data.code}`);
-			}
-			
-			lcedaUserInfo = data.result || {};
-			console.log('[私服链接] 成功获取 LCEDA 用户信息:', lcedaUserInfo);
-			
-		} catch (fetchError) {
-			// 7. LCEDA API 调用失败，使用本地登录信息继续
-			console.warn('[私服链接] 获取 LCEDA 用户信息失败:', fetchError.message);
-			console.warn('[私服链接] 将仅使用本地登录信息，可能缺少部分用户数据');
-			// 不中断流程，继续使用本地信息
-		}
-
-		// 8. 构建用户信息对象
-		const userInfo = {
-			uuid: loginData.uuid,
-			username: loginData.username,
-			avatar: loginData.avatar || '',
-			lceda_user_info: lcedaUserInfo
-		};
-		
-		uinfo = encodeURIComponent(JSON.stringify(userInfo)); // 编码 JSON 字符串
-		const serverUrl = `https://113.46.209.138/login?uinfo=${uinfo}`; // 构建完整 URL
-		privateServerLink.href = serverUrl; // 设置链接地址
-		
-		console.log('[私服链接] 设置成功:', serverUrl.substring(0, 80) + '...');
-		
-	} catch (error) {
-		// 9. 致命错误处理
-		console.error('[私服链接] 严重错误:', error);
-		alert(`私服登录配置失败：${error.message}\n\n请尝试：\n1. 检查网络连接\n2. 退出后重新登录\n3. 联系管理员`);
-		privateServerLink.href = 'https://113.46.209.138/login';
-	}
+	// 私服登录页地址，用户点击后跳转至私服手动输入用户名密码登录
+	privateServerLink.href = 'https://113.46.209.138/login';
 }
 
 // 页面加载完成后初始化
