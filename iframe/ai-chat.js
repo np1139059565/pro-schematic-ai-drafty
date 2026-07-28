@@ -967,6 +967,35 @@ async function runSendFlow({
 
 
 /**
+ * 重置对话记录（清空页面消息与本地历史）
+ * 用于修改私服 API 后调用：上一轮响应 ID（previousResponseId）与具体 API 服务端绑定，
+ * 切换/修改 API 后旧历史上下文会被不同服务端返回的内容污染，导致 AI 无法正确识别，因此需立即清空。
+ * 同时清空 conversationHistory 与 previousResponseId，系统消息会在下次发送时自动重新添加。
+ */
+function resetConversationRecords() {
+	// 清空消息容器，重新生成欢迎消息
+	messagesContainer.innerHTML = ''; // 清空所有消息
+	const welcomeDiv = document.createElement('div'); // 创建欢迎消息容器
+	welcomeDiv.className = 'welcome-message'; // 设置欢迎消息类名
+	welcomeDiv.innerHTML = `
+		<p>你好！我是原理图设计 AI 巧绘，专门帮助你进行原理图设计.</p>
+		<p>我可以帮你:</p>
+		<ul style="text-align: left; display: inline-block; margin-top: 8px;">
+			<li>解答原理图设计相关问题</li>
+			<li>根据用户自然语言，自动设计和优化原理图</li>
+		</ul>
+		<p style="margin-top: 12px;">请输入你的原理图设计问题，我会尽力帮助你！</p>
+	`; // 设置欢迎消息内容
+	messagesContainer.appendChild(welcomeDiv); // 添加欢迎消息
+
+	// 清空对话历史（系统消息会在下次发送消息时自动添加）
+	conversationHistory = []; // 重置对话历史数组
+
+	// 重置上一轮响应 ID（该 ID 与服务端绑定，更换 API 后立即失效）
+	previousResponseId = null; // 重置响应 ID
+}
+
+/**
  * 处理清空对话
  */
 function handleClearChat() {
@@ -977,34 +1006,8 @@ function handleClearChat() {
 		return; // 直接返回
 	}
 
-	// 清空消息容器（保留欢迎消息）
-	const welcomeMsg = messagesContainer.querySelector('.welcome-message'); // 获取欢迎消息
-	messagesContainer.innerHTML = ''; // 清空消息容器
-	if (!welcomeMsg) {
-		// 如果欢迎消息不存在
-		// 重新添加欢迎消息
-		const welcomeDiv = document.createElement('div'); // 创建欢迎消息容器
-		welcomeDiv.className = 'welcome-message'; // 设置欢迎消息类名
-		welcomeDiv.innerHTML = `
-			<p>你好！我是原理图设计 AI 巧绘，专门帮助你进行原理图设计.</p>
-			<p>我可以帮你:</p>
-			<ul style="text-align: left; display: inline-block; margin-top: 8px;">
-				<li>解答原理图设计相关问题</li>
-				<li>根据用户自然语言，自动设计和优化原理图</li>
-			</ul>
-			<p style="margin-top: 12px;">请输入你的原理图设计问题，我会尽力帮助你！</p>
-		`; // 设置欢迎消息内容
-		messagesContainer.appendChild(welcomeDiv); // 添加欢迎消息
-	} else {
-		// 如果欢迎消息存在
-		messagesContainer.appendChild(welcomeMsg); // 重新添加欢迎消息
-	}
-
-	// 清空对话历史（系统消息会在下次发送消息时自动添加）
-	conversationHistory = []; // 重置对话历史数组
-
-	// 重置上一轮响应 ID
-	previousResponseId = null; // 重置响应 ID
+	// 复用统一的清空逻辑
+	resetConversationRecords(); // 清空页面与历史记录
 	// 更新状态
 	updateStatus('对话已清空', 'success'); // 更新状态为成功
 	setTimeout(() => {
@@ -1065,10 +1068,19 @@ function loadConfig() {
 /**
  * 处理使用私服复选框切换事件
  * 根据复选框状态显示/隐藏 API Model 输入框
+ * 当私服使用状态真正发生改变（即切换了 API 类型）时，立即清空对话记录，
+ * 因为旧历史上下文对切换后的 API 而言可能无法识别。
  */
 function handlePrivateServerToggle() {
-	usePrivateServer = usePrivateServerCheckbox.checked; // 更新使用私服状态
-	if (usePrivateServer) {
+	const newUsePrivateServer = usePrivateServerCheckbox.checked; // 读取复选框最新状态
+	if (newUsePrivateServer !== usePrivateServer) {
+		// 私服状态发生改变，立即清空页面记录
+		usePrivateServer = newUsePrivateServer; // 更新使用私服状态
+		resetConversationRecords(); // 清空对话记录，避免旧历史被 AI 误识别
+	}
+
+	// 根据状态显示/隐藏 Model 输入框
+	if (newUsePrivateServer) {
 		// 如果使用私服，隐藏 Model 输入框
 		arkModelInputContainer.style.display = 'none'; // 隐藏容器
 	} else {
@@ -1091,7 +1103,8 @@ function handleConfigClick() {
 	arkApiKeyInput.value = currentApiKey; // 设置 API Key 输入框值
 	arkModelInput.value = currentModel; // 设置 Model 输入框值
 	usePrivateServerCheckbox.checked = usePrivateServerValue; // 设置使用私服复选框状态
-	handlePrivateServerToggle(); // 根据复选框状态显示/隐藏 Model 输入框
+	// 仅同步界面显示状态，不触发清空（此处只是打开配置，尚未保存修改）
+	arkModelInputContainer.style.display = usePrivateServerValue ? 'none' : 'block';
 	usePrivateServer = usePrivateServerValue; // 更新使用私服状态
 
 	// 显示配置对话框
@@ -1114,8 +1127,26 @@ function handleSaveConfig() {
 	try {
 		// 获取输入框的值
 		const apiKey = arkApiKeyInput.value.trim(); // 获取 API Key 并去除首尾空格
-		const model = usePrivateServer ? '' : arkModelInput.value.trim(); // 如果使用私服，model 为空；否则获取 Model 并去除首尾空格
+		const newUsePrivateServer = usePrivateServerCheckbox.checked; // 获取私服开关最新状态
+		const model = newUsePrivateServer ? '' : arkModelInput.value.trim(); // 如果使用私服，model 为空；否则获取 Model 并去除首尾空格
 
+		// 与已保存配置对比，检测私服 API 是否真正发生修改
+		const savedApiKey = localStorage.getItem('api_key') || ''; // 读取已保存的 API Key
+		const savedModel = localStorage.getItem('api_model') || ''; // 读取已保存的 Model
+		const savedUsePrivateServer = (savedModel == '') ? true : false; // 还原已保存的私服状态
+
+		const configChanged =
+			apiKey !== savedApiKey || // API Key 变化
+			model !== savedModel || // Model 变化
+			newUsePrivateServer !== savedUsePrivateServer; // 私服开关变化（切换 API 类型）
+
+		// 修改私服 API 后清空页面记录，避免旧历史被不同服务端返回的上下文污染
+		if (configChanged) {
+			resetConversationRecords(); // 清空对话记录
+		}
+
+		// 同步全局私服状态（确保后续请求使用最新的 API 类型）
+		usePrivateServer = newUsePrivateServer; // 更新使用私服状态
 
 		// 更新 ARK API 模块配置
 		window.ArkAPI.updateConfig(apiKey, model); // 更新配置
@@ -1124,7 +1155,7 @@ function handleSaveConfig() {
 		handleCloseConfig(); // 关闭对话框
 
 		// 显示成功提示
-		updateStatus('配置已保存', 'success'); // 更新状态为成功
+		updateStatus(configChanged ? '配置已保存，对话记录已清空' : '配置已保存', 'success'); // 更新状态
 		setTimeout(() => {
 			// 延迟清空状态
 			updateStatus('', ''); // 清空状态文本
