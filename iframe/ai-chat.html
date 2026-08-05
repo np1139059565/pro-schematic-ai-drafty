@@ -17,6 +17,7 @@
 						自动执行
 					</label>
 					<button id="configBtn" class="config-btn" title="配置 ARK API">配置</button>
+					<button id="dataBtn" class="config-btn" title="数据管理（提示词 / 工具 / 资源）">数据</button>
 					<button id="clearBtn" class="clear-btn" title="清空对话">清空</button>
 				</div>
 			</div>
@@ -88,11 +89,60 @@
 			</div>
 		</div>
 
+		<!-- 数据管理抽屉（提示词 / 工具 / 资源 的本地数据化编辑界面，内部内容由 editor-drawer.js 动态渲染） -->
+		<div id="dataDrawer" class="dm-drawer" style="display: none">
+			<div class="dm-overlay" id="dmOverlay"></div>
+			<div class="dm-panel">
+				<!-- 抽屉头部：标题 / 数据状态徽标 / 全局操作按钮(并排,不分区) -->
+				<div class="dm-header">
+					<h3>数据管理</h3>
+					<span id="dmStatusBadge" class="dm-status"></span>
+					<div class="dm-header-actions">
+						<button id="dmImportBtn" class="dm-btn" title="选择来源:从源码(内存常量) / 从本地文件 导入">导入</button>
+						<input type="file" id="dmImportLocalInput" accept=".json,application/json" style="display: none" />
+						<button id="dmExportBtn" class="dm-btn" title="一次导出两部分:提示词业务数据(JSON) + 函数实现源码(JS)">导出</button>
+						<button id="dmDeleteBtn" class="dm-btn dm-btn-danger" title="删除本地数据库并回退到原始 JS 数据(即恢复默认),所有修改将丢失">删除数据库</button>
+						<button id="dmCloseBtn" class="dm-close-btn" title="关闭">×</button>
+					</div>
+				</div>
+				<!-- 分类标签页（由 editor-drawer.js 的 TABS 常量动态渲染：图谱 / 提示词 / 精选工具 / EDA函数 / 资源 / 日志；日志分栏未激活时隐藏） -->
+				<div class="dm-tabs" id="dmTabs"></div>
+				<!-- 搜索与列表工具栏 -->
+				<div class="dm-toolbar">
+					<input id="dmSearchInput" class="dm-search" type="text" placeholder="搜索 name / description..." />
+						<button id="dmAddToolBtn" class="dm-btn" style="display: none" title="新增自定义精选工具/提示词">新增</button>
+						<button id="dmClearLogBtn" class="dm-btn" style="display: none" title="清空全部会话与调用日志(仅删日志表)">清空日志</button>
+					</div>
+				<!-- 主体：左侧条目列表 + 右侧编辑面板 -->
+				<div class="dm-body">
+					<div class="dm-list-wrap">
+						<ul id="dmList" class="dm-list"></ul>
+						<div class="dm-pager">
+							<button id="dmPrevPageBtn" class="dm-btn">上一页</button>
+							<span id="dmPageInfo" class="dm-page-info"></span>
+							<button id="dmNextPageBtn" class="dm-btn">下一页</button>
+						</div>
+					</div>
+					<div class="dm-splitter" id="dmSplitter"></div>
+					<div id="dmEdit" class="dm-edit">
+						<div class="dm-edit-empty">请选择左侧条目进行查看 / 编辑</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<script src="/iframe/vendor/alasql.min.js"></script>
+		<script src="/iframe/vendor/d3.min.js"></script>
 		<script src="/iframe/ark-api.js"></script>
 		<!-- <script src="/iframe/cursor-cli.js"></script> -->
 		<script src="/iframe/mcp-prompt.js"></script>
 		<script src="/iframe/eda-api.js"></script>
 		<script src="/iframe/mcp-eda.js"></script>
+		<script src="/iframe/error-handler.js"></script>
+		<script src="/iframe/abort-signal.js"></script>
+		<script src="/iframe/data-store.js"></script>
+		<script src="/iframe/editor-drawer.js"></script>
+		<script src="/iframe/graph-view.js"></script>
 		<script src="/iframe/ai-chat.js"></script>
 	</body>
 </html>

@@ -1,6 +1,24 @@
 /**
- * AI 对话界面逻辑
- * 实现对话界面的交互功能，使用 ark-api.js 模块进行 API 调用
+ * 主控制器 ai-chat.js —— AI 对话界面逻辑
+ *
+ * 职责:
+ * 1. UI 状态机(UI_STATE:IDLE / SENDING / STOPPED / EXECUTING)统一管控输入框、
+ *    发送/停止/清空按钮与自动执行复选框的可用性;
+ * 2. 对话主流程:handleSendMessage → runSendFlow → callAIAndHandleResponse,
+ *    经 ark-api.js 调用 ARK 直连或私服后端(每轮绑定 60s 超时 + 手动取消的合并信号);
+ * 3. 工具调用流程:parseAIResponse 解析 function_call → generateCodeFromToolCalls 生成
+ *    mcpEDA.callTool 代码块 → 用户「确认执行」(或开启自动执行后延迟 2 秒自动点击)
+ *    → executeToolCallsAndContinue → 结果以 function_call_output 回传模型继续下一轮;
+ * 4. 配置管理:ARK API Key / Model / 私服开关的读写与即时生效(localStorage 持久化),
+ *    配置变更时清空对话历史,避免 previous_response_id 跨服务端污染上下文;
+ * 5. 调用日志:数据库激活时,每轮调用前经 dataStore.appendLog 写请求快照,
+ *    响应返回后经 updateLogResponse 回填(fire-and-forget,失败不阻断对话);
+ * 6. 系统消息:暴露 window.applySystemMessage 供 data-store.js 在 system_message
+ *    被编辑后同步替换当前会话历史中的 system 消息,无需清空对话即可生效。
+ *
+ * 依赖模块(均由 ai-chat.html 在本文件之前加载):
+ *   ark-api.js(后端) / mcp-eda.js(工具执行) / data-store.js(数据与日志) /
+ *   abort-signal.js(取消信号 AbortManager) / error-handler.js(错误分类 ErrorHandler)
  */
 
 // DOM 元素引用
@@ -26,7 +44,7 @@ let usePrivateServer = false; // 是否使用私服（默认使用 ARK API）
 // 对话历史数组，用于维护上下文
 let conversationHistory = []; // 存储所有对话消息，格式：[{role: 'user', content: '...'}, {role: 'assistant', content: '...'}]
 let previousResponseId = null; // 上一轮响应的 ID（用于多轮对话）
-let isStop = false; // 是否停止
+// 注意:取消语义已统一交由 abort-signal.js 的 AbortManager 管理,此处不再使用全局 isStop 标志
 let totalTokensAccumulated = 0; // 累加多轮对话的 total_tokens
 let currentLoadingId = null; // 当前加载指示器 ID
 
@@ -43,12 +61,148 @@ const UI_STATE = {
 };
 
 let currentUIState = UI_STATE.IDLE; // 当前界面状态
+let pendingConfirmation = false; // 是否存在等待用户确认执行的代码块(待确认态)
 
 
 // 系统消息 - 用于描述 AI 角色和职责，用户可以在控制台临时修改系统消息，对 AI 巧绘进行定制化
-window.top.systemMessage = window.promptList.find(prompt => prompt.name === 'system_message').messages[0].content.text;
+// 取出时还原 @{name} 引用标记为裸 name，保证送入模型的文本与标记化前逐字节一致（详见《系统设计说明》§4.5「@引用 标记与还原」）
+window.top.systemMessage = (window.promptList.find(prompt => prompt.name === 'system_message').messages[0].content.text || '')
+	.replace(/@\{([A-Za-z0-9_.\$]+)\}/g, '$1');
+
+/**
+ * 应用新的系统消息并即时生效
+ * 由 data-store.js 在数据库激活/system_message 提示词被编辑后调用:
+ * 除更新全局 systemMessage 外,还同步替换当前对话历史中的 system 消息,
+ * 使修改无需清空对话即可在下一轮请求生效
+ * @param {string} newText - 新的系统消息文本
+ */
+function applySystemMessage(newText) {
+	window.top.systemMessage = newText; // 更新全局系统消息
+	const systemMsg = conversationHistory.find((msg) => msg.role === 'system'); // 查找会话中的系统消息
+	if (systemMsg) {
+		systemMsg.content = newText; // 已存在则原地替换内容
+	}
+}
+window.applySystemMessage = applySystemMessage; // 暴露给 data-store.js 调用
+
+// ==================== 日志写入（数据库激活时记录每轮 AI 调用） ====================
+
+/** 当前日志会话 ID 与轮次(仅数据库已激活时记录) */
+let currentSessionId = null;
+let currentTurn = 0;
+
+/** 是否启用日志写入(仅数据库激活且 dataStore 提供日志 API 时) */
+function isLoggingEnabled() {
+	return !!(window.dataStore && window.dataStore.isActivated && window.dataStore.isActivated()
+		&& window.dataStore.createSession && window.dataStore.appendLog);
+}
+
+/** 新建日志会话(每次用户发送消息时调用;标题取首句前 20 字) */
+function startLogSession(firstUserText) {
+	currentSessionId = null;
+	currentTurn = 0;
+	if (!isLoggingEnabled()) return;
+	const title = (firstUserText || '').trim().slice(0, 20) || '未命名会话';
+	currentSessionId = window.dataStore.createSession(title);
+}
+
+/** 写入本轮请求日志(同步返回 logId,失败不影响主流程) */
+function writeChatLog(requestPayload) {
+	if (!isLoggingEnabled() || !currentSessionId) return null;
+	currentTurn += 1;
+	return window.dataStore.appendLog({
+		sessionId: currentSessionId,
+		turn: currentTurn,
+		requestPayload,
+		promptSnapshot: window.top.systemMessage, // 系统消息快照
+		toolSnapshot: window.mcpEDA.toolDescriptions // 工具描述快照(含自定义工具)
+	});
+}
+
+/** 回填本轮响应日志(异步,吞异常) */
+function updateChatLogResponse(logId, responsePayload) {
+	if (!logId || !window.dataStore.updateLogResponse) return;
+	try {
+		window.dataStore.updateLogResponse(logId, responsePayload);
+	} catch (error) {
+		console.error('[ai-chat] 日志响应回填失败:', error);
+	}
+}
+
 // 初始化函数
+/**
+ * 安装全局未捕获异常兜底处理器（方案A核心）
+ *
+ * 职责：
+ * 1. 拦截 window 上的 "unhandledrejection" 事件——即 EDA 宿主原生 API 在内部 UI 逻辑
+ *    （ui.js/api.js）深处自行 reject、却未返回到插件 await 链上的逃逸 promise。
+ *    典型表现：控制台出现 "Uncaught (in promise) #<Mt>"，Mt 为 EDA 内部错误对象（minified）。
+ * 2. 拦截 window 上的 "error" 事件——兜底捕获逃逸到全局的同步异常（同源于 EDA 宿主）。
+ * 3. 统一转换为带上下文的 console.error 日志（不影响对话主流程，不抛出、不阻断页面），
+ *    从而防止逐轮累积的未捕获 rejection 触发宿主"不可处理的错误"导致页面卡死。
+ *
+ * 注意：
+ * - 此处理器仅作"最后一道防线"。工具执行链路上的可预期错误（参数非法、工具抛错等）
+ *   仍由 executeSingleToolCall / callTool 的 try/catch 捕获并回喂模型自愈，不在此重复处理。
+ * - 若逃逸 rejection 携带 reason 且 reason 含可识别文本，一并打印，便于定位根因
+ *   （如 "uuid/libraryUuid 不存在"、"画布未激活"、"编辑器未聚焦" 等 EDA 语义）。
+ * - 使用模块级标志 guardInstalled 确保只注册一次（init 可能因热重载多次调用）。
+ */
+let guardInstalled = false; // 全局兜底处理器是否已安装（防止重复注册）
+function installGlobalRejectionGuard() {
+	if (guardInstalled) {
+		// 已安装则直接返回，避免重复绑定同一监听器
+		return;
+	}
+	guardInstalled = true; // 标记已安装
+
+	// 拦截未捕获的 Promise rejection（核心场景：EDA 原生 API 逃逸的内部 promise）
+	window.addEventListener('unhandledrejection', (event) => {
+		const reason = event.reason; // 逃逸的拒绝原因（可能是 Error 对象或任意值，如 #<Mt>）
+		let reasonText = '未知原因'; // 默认描述
+		if (reason instanceof Error) {
+			// 标准 Error：提取 message（Mt 等 minified 对象通常 message 含 EDA 语义）
+			reasonText = reason.message || reason.toString();
+		} else if (typeof reason === 'string') {
+			// 字符串原因直接采用
+			reasonText = reason;
+		} else if (reason && typeof reason === 'object') {
+			// 对象原因：尽量序列化（#<Mt> 之类无 message 的对象也能留下类型线索）
+			try {
+				reasonText = JSON.stringify(reason);
+			} catch (_) {
+				reasonText = reason.toString();
+			}
+		}
+		// 记录到控制台：标注来源，便于区分"可预期的工具错误"与"宿主逃逸异常"
+		console.error('[ai-chat] 已拦截未捕获的 Promise rejection（来源：EDA 宿主原生 API，不影响对话）：', reasonText);
+		// 调用 preventDefault 阻止浏览器将其作为致命错误上报，避免宿主判定页面不可恢复
+		if (typeof event.preventDefault === 'function') {
+			event.preventDefault();
+		}
+	});
+
+	// 拦截逃逸到全局的同步错误（双保险：EDA 宿主在个别路径会同步 throw 而非 reject）
+	window.addEventListener('error', (event) => {
+		// 仅处理确实逃逸到 window 的运行时错误（event.error 存在说明来自 window.onerror）
+		if (event && event.error) {
+			const msg = event.error.message || event.message || '未知错误';
+			console.error('[ai-chat] 已拦截全局逃逸错误（来源：EDA 宿主，不影响对话）：', msg);
+		}
+	});
+}
+
 function init() {
+	// 注册全局异常兜底处理器（方案A：拦截 EDA 原生 API 逃逸的未捕获 rejection/同步错误）
+	// 背景：嘉立创 EDA 宿主原生 API（如 eda.sch_PrimitiveComponent.create）在内部 UI 校验失败、
+	// 画布未激活、元件 uuid 不存在等场景下，会在 ui.js/api.js 深处自行 reject 一个内部 promise，
+	// 该 promise 未返回到我们的 await 链上（fire-and-forget），在 microtask 阶段被浏览器抛出为
+	// "Uncaught (in promise)"。此类逃逸 rejection 不会中断当前 await（外层已拿到包装结果），
+	// 但会逐轮累积，最终触发宿主"不可处理的错误"导致页面卡死。
+	// 此处统一拦截，转为带上下文的日志记录，避免页面崩溃；真实的工具执行错误仍由
+	// executeSingleToolCall 的 try/catch → callTool 的 try/catch 正常回喂模型自愈。
+	installGlobalRejectionGuard();
+
 	// 获取 DOM 元素
 	messagesContainer = document.getElementById('messagesContainer');
 	messageInput = document.getElementById('messageInput');
@@ -102,6 +256,12 @@ function init() {
 	// 加载配置
 	loadConfig(); // 从 localStorage 加载配置
 	setupPrivateServerLink(); // 设置私服链接
+
+	// 初始化本地数据层(异步):数据库已激活时会用数据库数据覆盖运行时缓存,
+	// 未激活时保持原始 JS 数据不变,失败不阻断聊天主流程
+	if (window.dataStore) {
+		window.dataStore.init().catch((error) => console.error('数据层初始化失败:', error));
+	}
 
 	// 设置初始状态
 	updateUIState(UI_STATE.IDLE); // 初始化界面状态
@@ -385,10 +545,12 @@ async function executeSingleToolCall(toolCall) {
 			};
 		}
 	} catch (error) {
-		// 捕获执行错误
+		// 捕获执行错误：复用 ErrorHandler.toToolError 归类为工具错误结果，
+		// 结果将作为 function_call_output 回喂模型（对应文档"工具错误回喂模型自愈"）
+		const toolError = window.ErrorHandler.toToolError(error); // 归类为工具错误
 		return {
 			tool_call_id: toolCall.id, // 工具调用 ID
-			content: `工具执行异常：${error.message}`, // 错误信息
+			content: `❌ ${toolError.message}`, // 错误描述
 			isError: true, // 标记为错误
 		};
 	}
@@ -419,6 +581,7 @@ async function callAIAndHandleResponse() {
 
 	// 确保系统消息在对话历史中
 	const isAddTool = ensureSystemMessage(); // 确保系统消息存在
+	const chatLogId = writeChatLog(conversationHistory); // 记录本轮请求快照(同步,失败不影响主流程)
 	
 	// 创建 API Promise 并追踪
 	let apiPromise;
@@ -426,23 +589,20 @@ async function callAIAndHandleResponse() {
 		// 根据配置选择调用 ARK API 或私服 API
 		apiPromise = 
 			window.ArkAPI[usePrivateServer?'callPrivateChat':'callArkChat'](
-				conversationHistory, previousResponseId,isAddTool ? window.mcpEDA.toolDescriptions : null); // 调用 API
+				conversationHistory, previousResponseId,isAddTool ? window.mcpEDA.toolDescriptions : null,
+				window.AbortManager.createTimeoutSignal(60000)); // 调用 API(绑定 60s 超时+手动取消信号)
 		
 		// 追踪 API Promise
 		activeApiPromises.add(apiPromise); // 添加到追踪集合
 		
 		// 等待 API 响应
 		const response = await apiPromise;
+		updateChatLogResponse(chatLogId, response); // 回填响应快照
 		
 		// 从追踪集合中移除
 		activeApiPromises.delete(apiPromise); // 移除追踪
-		// 如果停止状态为 true，直接返回
-		if (isStop) {
-			resumeStop();
-			return; // 直接返回
-		}
-		// 累加 total_tokens
-		totalTokensAccumulated += response.usage.total_tokens; // 累加 tokens
+		// 累加 total_tokens(加空值保护,响应缺 usage 时不抛异常)
+		totalTokensAccumulated += (response.usage && response.usage.total_tokens) || 0; // 累加 tokens
 		console.info(`total_tokens 累计：${totalTokensAccumulated}`, 'history', conversationHistory);//打印对话历史和累计 tokens
 
 		// 解析 AI 回复
@@ -481,11 +641,11 @@ async function callAIAndHandleResponse() {
 		}
 		// 移除加载指示器
 		removeLoadingIndicator(); // 移除加载动画
-		// 如果停止状态为 true，直接返回
-		if (isStop) {
-			resumeStop();
-			return; // 直接返回
+		// 用户主动取消(abort)引发的错误不再作为失败处理
+		if (AbortManager.isCancelled()) {
+			return; // 直接返回,不记录为错误
 		}
+		updateChatLogResponse(chatLogId, { error: error.message }); // 记录错误快照
 		throw error; // 重新抛出错误
 	}
 
@@ -494,34 +654,73 @@ async function callAIAndHandleResponse() {
 
 /**
  * 创建工具调用代码块（等待用户确认执行）
+ * 代码块支持在确认前实时编辑：用户可直接修改代码文本，确认执行时若内容与原始代码不同，
+ * 将按编辑后的代码动态执行；同时保留原始代码副本，可通过「回退」按钮一键还原。
  * @param {string} codeContent - 代码内容
- * @param {Array} toolCalls - 工具调用数组
+ * @param {Array} toolCalls - 工具调用数组（原始副本，用于回退与结果回传 call_id）
  */
 function createToolCallCodeBlock(codeContent, toolCalls) {
+	// 进入待确认执行态：标记存在待确认代码块，并显示停止按钮以便随时结束当前操作
+	pendingConfirmation = true; // 标记待确认态
+	stopBtn.style.display = 'block'; // 显示停止按钮(待确认态允许用户先停止再清空)
+
 	// 创建代码容器
 	const codeContainer = document.createElement('div'); // 创建代码容器
 	codeContainer.className = 'code-block-container'; // 设置代码容器类名
+
+	// 保留原始代码副本（闭包常量），用于回退
+	const originalCode = codeContent; // 原始代码快照
 
 	// 创建代码块
 	const codeBlock = document.createElement('pre'); // 创建代码块元素
 	codeBlock.className = 'code-block'; // 设置代码块类名
 	const codeElement = document.createElement('code'); // 创建代码元素
 	codeElement.textContent = codeContent; // 设置代码内容
+	// 允许在确认前实时编辑代码（contentEditable + 编辑态样式）
+	codeElement.contentEditable = 'true'; // 开启可编辑
+	codeElement.classList.add('code-editable'); // 添加可编辑样式类
 	codeBlock.appendChild(codeElement); // 将代码元素添加到代码块
 
 	// 创建操作按钮容器
 	const actionContainer = document.createElement('div'); // 创建操作容器
 	actionContainer.className = 'code-action-container'; // 设置操作容器类名
 
+	// 创建回退按钮（还原为原始代码），默认禁用（未改动时无需回退）
+	const revertBtn = document.createElement('button'); // 创建回退按钮
+	revertBtn.className = 'code-revert-btn'; // 设置回退按钮类名
+	revertBtn.textContent = '回退原始'; // 设置按钮文本
+	revertBtn.disabled = true; // 初始禁用：尚未编辑
+	// 监听编辑内容变化，控制回退按钮可用状态与编辑态高亮
+	codeElement.addEventListener('input', () => {
+		const changed = codeElement.textContent !== originalCode; // 是否与原始代码不同
+		revertBtn.disabled = !changed; // 有改动才可回退
+		codeElement.classList.toggle('code-edited', changed); // 改动时高亮提示
+	});
+	revertBtn.onclick = () => {
+		// 点击回退：还原原始代码并复位状态
+		codeElement.textContent = originalCode; // 还原文本
+		revertBtn.disabled = true; // 复位禁用
+		codeElement.classList.remove('code-edited'); // 取消编辑高亮
+	};
+
 	// 创建确认执行按钮（统一按钮，不再区分 read/write）
 	const confirmBtn = document.createElement('button'); // 创建确认按钮
 	confirmBtn.className = 'code-confirm-btn'; // 设置确认按钮类名
 	confirmBtn.textContent = '确认执行'; // 设置按钮文本
 	confirmBtn.onclick = async () => {
-		// 点击事件
-		await executeToolCallsAndContinue(toolCalls, codeContainer, confirmBtn); // 执行工具调用并继续对话
+		// 点击事件：点击即离开待确认态
+		pendingConfirmation = false; // 清除待确认态标记
+		const currentCode = codeElement.textContent; // 读取当前（可能已编辑的）代码
+		if (currentCode !== originalCode) {
+			// 内容与原始代码不同 → 按编辑后的代码动态执行
+			await executeEditedCode(currentCode, codeContainer, confirmBtn, toolCalls); // 执行编辑后代码
+		} else {
+			// 未改动 → 沿用原始 toolCalls 对象执行（原生路径）
+			await executeToolCallsAndContinue(toolCalls, codeContainer, confirmBtn); // 执行工具调用并继续对话
+		}
 	}; // 设置点击事件
 
+	actionContainer.appendChild(revertBtn); // 将回退按钮添加到操作容器
 	actionContainer.appendChild(confirmBtn); // 将确认按钮添加到操作容器
 	codeContainer.appendChild(codeBlock); // 将代码块添加到代码容器
 	codeContainer.appendChild(actionContainer); // 将操作容器添加到代码容器
@@ -540,7 +739,7 @@ function createToolCallCodeBlock(codeContent, toolCalls) {
 
 	scrollToBottom(); // 滚动到消息底部
 
-	// 如果开启自动执行，5 秒后自动触发执行
+	// 如果开启自动执行，2 秒后自动触发执行
 	if (autoExecWriteEnabled) {
 		const timeoutId = setTimeout(() => {
 			// 延迟执行
@@ -549,8 +748,62 @@ function createToolCallCodeBlock(codeContent, toolCalls) {
 				// 未被禁用才执行
 				confirmBtn.click(); // 自动点击执行
 			}
-		}, 2000); // 5 秒延迟
+		}, 2000); // 2 秒后自动执行
 		activeTimeouts.add(timeoutId); // 追踪 setTimeout
+	}
+}
+
+/**
+ * 执行用户编辑后的代码（确认前已实时修改）
+ * 将编辑后的代码文本动态编译为异步函数执行，并把返回的 resp 包装成与原生路径兼容的
+ * toolResults 结构，复用 handleToolExecutionResults / continueConversationAfterTools。
+ * @param {string} codeText - 编辑后的代码文本
+ * @param {Object} codeContainer - 代码容器 DOM 元素
+ * @param {Object} button - 确认执行按钮 DOM 元素
+ * @param {Array} toolCalls - 原始工具调用数组（用于回退 call_id 与结果关联）
+ */
+async function executeEditedCode(codeText, codeContainer, button, toolCalls) {
+	try {
+		// 禁用按钮并更新文本
+		button.disabled = true; // 禁用确认按钮
+		button.textContent = '执行中...'; // 更新按钮文本
+
+		// 将编辑后的代码动态执行：mcpEDA 为生成代码所依赖的全局调用入口
+		// 生成代码形如 `const resp = ...; await mcpEDA.callTool(...); return resp;`
+		// 包裹在 async IIFE 中以支持 await，并通过 new Function 注入 mcpEDA 入参
+		const runCode = new Function('mcpEDA', 'return (async () => {\n' + codeText + '\n})();'); // 编译
+		const resp = await runCode(window.mcpEDA); // 执行并取回 resp
+
+		// 把 resp 包装成与原生 executeToolCalls 兼容的结果结构
+		// 兼容字段：tool_call_id（用于回传 Responses API 的 call_id）、content、isError
+		// 若工具本身返回 errorMessage（执行层面的业务错误），同样标记为 isError 以回喂模型自愈
+		const hasToolError = !!(resp && resp.errorMessage); // 工具是否返回业务错误
+		const wrappedResults = [{
+			tool_call_id: (toolCalls[0] && toolCalls[0].id) || 'edited', // 回退使用原始首个调用 ID
+			content: hasToolError
+				? `❌ ${resp.errorMessage}`
+				: (resp ? JSON.stringify(resp.data, null, 2) : '(无返回)'), // 结果文本
+			isError: hasToolError, // 是否出错
+		}]; // 包装结果
+
+		// 复用原生结果处理与后续对话流程
+		const toolInputMessages = handleToolExecutionResults(wrappedResults, codeContainer, button); // 处理结果
+		await continueConversationAfterTools(toolInputMessages); // 继续对话
+	} catch (error) {
+		// 编辑后代码执行出错（如语法错误、变量未定义 resp1 is not defined 等）：
+		// 不走通用的"网络/AI 错误"提示（那只会显示无入口的"重新发送"文案并终止对话），
+		// 而是复用 ErrorHandler.toToolError 把错误包装为工具执行结果，回喂模型让其自愈。
+		const toolError = window.ErrorHandler.toToolError(error); // 归类为工具错误结果
+		const wrappedResults = [{
+			tool_call_id: (toolCalls[0] && toolCalls[0].id) || 'edited', // 回退使用原始首个调用 ID
+			content: `❌ ${toolError.message}`, // 错误描述
+			isError: true, // 标记为错误
+		}]; // 包装错误结果
+		const toolInputMessages = handleToolExecutionResults(wrappedResults, codeContainer, button); // 展示错误结果
+		updateStatus('代码执行出错，已回喂模型尝试自愈', 'error'); // 状态栏提示自愈中
+		// 把错误作为 function_call_output 回喂模型，模型据此修正后通常会再次返回可执行的代码块
+		// （即代码块界面上的"回退原始 / 确认执行"按钮即为重新发送入口，无需额外按钮）
+		await continueConversationAfterTools(toolInputMessages); // 继续对话（自愈）
 	}
 }
 
@@ -610,12 +863,15 @@ async function continueConversationAfterTools(toolInputMessages) {
 	updateStatus('AI 正在处理结果...', 'info'); // 更新状态提示
 	
 	// 创建 API Promise 并追踪
+	const chatLogId = writeChatLog(toolInputMessages); // 记录本轮请求快照(工具循环沿用同一会话)
 	let apiPromise;
 	try {
 		// 根据配置选择调用 ARK API 或私服 API
 		apiPromise = window.ArkAPI[usePrivateServer ? 'callPrivateChat' : 'callArkChat'](
 				toolInputMessages, // 工具执行结果（作为 input 传入）
-			previousResponseId // 上一轮响应 ID
+			previousResponseId, // 上一轮响应 ID
+			null, // 无新增工具
+			window.AbortManager.createTimeoutSignal(60000) // 绑定 60s 超时+手动取消信号
 		); // 调用 API
 		
 		// 追踪 API Promise
@@ -623,18 +879,13 @@ async function continueConversationAfterTools(toolInputMessages) {
 		
 		// 等待 API 响应
 		const response = await apiPromise;
+		updateChatLogResponse(chatLogId, response); // 回填响应快照
 		
 		// 从追踪集合中移除
 		activeApiPromises.delete(apiPromise); // 移除追踪
 		
-		// 如果停止状态为 true，直接返回
-		if (isStop) {
-			resumeStop();
-			return; // 直接返回
-		}
-		
-		// 累加 total_tokens
-		totalTokensAccumulated += response.usage.total_tokens; // 累加 tokens
+		// 累加 total_tokens(加空值保护,响应缺 usage 时不抛异常)
+		totalTokensAccumulated += (response.usage && response.usage.total_tokens) || 0; // 累加 tokens
 		console.info('history', conversationHistory, `total_tokens 累计：${totalTokensAccumulated}`);//打印对话历史和累计 tokens
 
 		// 解析响应
@@ -672,11 +923,11 @@ async function continueConversationAfterTools(toolInputMessages) {
 		}
 		// 移除加载指示器
 		removeLoadingIndicator(); // 移除加载动画
-		// 如果停止状态为 true，直接返回
-		if (isStop) {
-			resumeStop();
-			return; // 直接返回
+		// 用户主动取消(abort)引发的错误不再作为失败处理
+		if (AbortManager.isCancelled()) {
+			return; // 直接返回,不记录为错误
 		}
+		updateChatLogResponse(chatLogId, { error: error.message }); // 记录错误快照
 		throw error; // 重新抛出错误
 	}
 
@@ -718,20 +969,58 @@ async function executeToolCallsAndContinue(toolCalls, codeContainer, button) {
  * @param error - 错误对象
  * @param errorPrefix - 错误日志前缀（可选）
  */
-function handleAIError(error, errorPrefix = 'AI 请求失败') {
+function handleAIError(error, errorPrefix = 'AI 请求失败', onResend = null) {
 	// 移除加载指示器（如果存在）
 	removeLoadingIndicator(); // 移除加载动画
 
-	// 输出错误日志
-	console.error(`${errorPrefix}:`, error); // 输出错误日志
+	// 用户主动取消(abort)不视为失败,静默结束
+	if (AbortManager.isCancelled()) {
+		updateStatus('已停止', 'idle'); // 更新状态为空闲
+		return; // 直接返回,不展示错误
+	}
 
-	// 显示错误消息
-	const errorMsg = error.message || '请求失败，请检查网络连接或稍后重试.'; // 错误消息
-	addMessageToChat('assistant', `❌ 错误:${errorMsg}`, true); // 添加错误消息
-	updateStatus('请求失败', 'error'); // 更新状态为错误
+	// 错误分类与恢复引导(对标 Cursor / Claude Code 的分类型提示)
+	const info = window.ErrorHandler.classifyError(error, errorPrefix); // 归类错误
+	console.error(`[${info.type}] ${info.title}:`, error); // 输出带类型的错误日志
 
-	// 滚动到底部
-	// scrollToBottom(); // 滚动到消息底部
+	// 组装"标题 + 原因 + 可操作建议"的结构化提示。
+	// 注意:info.message 已经是透传后的唯一、明确真实原因(后台/底层具体错误文本),
+	// 因此此处不再追加独立的"真实原因"行,避免把通用引导与真实原因并排展示,
+	// 造成用户困惑、原因不唯一。整段提示保持"唯一原因 + 一条可操作建议"。
+	const guideText =
+		`❌ ${info.title}\n` +
+		`${info.message}\n` +
+		`💡 ${info.action}`; // 恢复引导
+
+	// 错误提示必须无条件渲染到界面(最优先,任何后续逻辑异常都不影响它显示)
+	const messageDiv = addMessageToChat('assistant', guideText, true); // 添加结构化错误提示
+	updateStatus(info.title, 'error'); // 状态栏展示错误类型
+
+	// 仅当确为 API Key / 模型配置问题时,才高亮配置按钮引导修正;
+	// "额度不足"等配额类问题不属于配置问题,不应误导用户去改配置按钮
+	if (info.isConfigIssue && configBtn) {
+		configBtn.classList.add('config-btn-alert'); // 添加告警样式
+	}
+
+	// 在错误气泡末尾追加「重新发送」按钮:失败消息已从对话历史剔除(见 runSendFlow 回滚),
+	// 仅保留界面这条错误提示并允许一键重发,避免失败消息污染后续成功对话的上下文。
+	// 用独立 try/catch 包裹,确保按钮逻辑出错也绝不影响上方错误提示的显示。
+	if (onResend && messageDiv) {
+		try {
+			const resendBtn = document.createElement('button'); // 创建重新发送按钮
+			resendBtn.className = 'error-resend-btn'; // 设置按钮类名
+			resendBtn.textContent = '重新发送'; // 按钮文案
+			resendBtn.onclick = () => {
+				// 点击重发:移除当前错误气泡(含本按钮),避免界面堆积重复错误提示
+				if (messageDiv.parentNode) messageDiv.parentNode.removeChild(messageDiv);
+				onResend(); // 复用原始入参重新执行发送流程(闭包内已绑定原始消息)
+			}; // 绑定点击
+			const contentDiv = messageDiv.querySelector('.message-content') || messageDiv;
+			contentDiv.appendChild(resendBtn); // 添加重新发送按钮
+		} catch (btnErr) {
+			console.error('[ai-chat] 重新发送按钮渲染失败(不影响错误提示):', btnErr);
+		}
+	}
 }
 
 
@@ -747,6 +1036,15 @@ async function handleSendMessage() {
 		return; // 如果消息为空，直接返回
 	}
 
+	// 日志会话边界划分:以 previous_response_id 为准。
+	// previous_response_id 为 null 表示这是一次全新的对话起点(上下文未串联上一轮),
+	// 此时新建日志会话;previous_response_id 存在表示延续上一轮上下文(真实连续对话),
+	// 则复用当前会话 currentSessionId,把本轮请求继续追加进去,从而更真实地反映对话流程。
+	if (!previousResponseId) {
+		// 仅在对话真正重新开始(新会话边界)时新建会话
+		startLogSession(message);
+	}
+
 	await runSendFlow({
 		uiState: UI_STATE.SENDING, // 进入发送中状态
 		statusText: '正在发送...', // 状态提示
@@ -754,10 +1052,13 @@ async function handleSendMessage() {
 			prepareUserMessageUI(message); // 处理用户消息 UI
 		}, // UI 预处理
 		appendHistory: () => {
-			conversationHistory.push({
+			// 追加 user 消息并返回该消息对象,供发送失败时从历史中回滚剔除
+			const msg = {
 				role: 'user', // 用户角色
 				content: message, // 用户消息内容
-			}); // 添加到对话历史
+			}; // 构造用户消息
+			conversationHistory.push(msg); // 添加到对话历史
+			return msg; // 返回引用,便于失败回滚
 		}, // 写入历史
 		errorPrefix: 'AI 请求失败', // 错误前缀
 		needScroll: true, // 发送用户消息需要滚动
@@ -767,39 +1068,55 @@ async function handleSendMessage() {
 
 /**
  * 处理停止按钮点击事件
- * 立即检测并取消所有正在执行的异步操作，如果没有正在执行的操作，则立即恢复到空闲状态
+ * 经 AbortManager.abortCurrent() 真正中断底层 fetch(而非仅置标志位),
+ * 并清除自动执行等待中的 setTimeout;
+ * 无在途请求时立即恢复空闲,否则切到 STOPPED 态等待请求因 abort 结束后由 resumeStop 恢复。
  */
 function handleStop() {
-	isStop = true; // 设置为停止状态
-	
-	// 取消所有正在执行的 setTimeout
+	// 待确认执行态:仅存在未确认的代码块(无在途请求),停止即移除这些代码块并恢复空闲,
+	// 让用户能在清空前正常结束当前操作
+	if (pendingConfirmation) {
+		pendingConfirmation = false; // 清除待确认态标记
+		// 移除所有仍处于待确认(未禁用)的代码块容器
+		document.querySelectorAll('.code-confirm-btn:not(:disabled)').forEach(btn => {
+			const container = btn.closest('.code-block-container'); // 定位外层容器
+			if (container && container.parentNode) container.parentNode.removeChild(container); // 移除
+		});
+		resumeStop(); // 恢复到空闲状态(隐藏停止按钮、启用清空等)
+		return; // 提前返回,无需触发 abort/超时清理
+	}
+
+	// 通过 AbortManager 真正中断底层 fetch/工具执行(而非仅置标志位)
+	window.AbortManager.abortCurrent();
+
+	// 取消所有正在执行的 setTimeout(如自动执行延时)
 	activeTimeouts.forEach(timeoutId => {
 		clearTimeout(timeoutId); // 清除定时器
 	});
-	
+
 	// 检测是否有正在执行的 API 请求
 	const hasActiveApiRequest = activeApiPromises.size > 0; // 检查是否有正在执行的 API 请求
-	
+
 	// 如果没有正在执行的操作，立即恢复到空闲状态
 	if (!hasActiveApiRequest) {
 		// 没有正在执行的操作，立即恢复
 		resumeStop(); // 恢复到空闲状态
 	} else {
-		// 有正在执行的操作，更新为停止状态（等待操作完成后自动恢复）
+		// 有正在执行的操作，更新为停止状态(等待请求因 abort 完成后自动恢复)
 		updateUIState(UI_STATE.STOPPED); // 更新为停止状态
 	}
 }
 
 /**
- * 恢复停止状态
+ * 恢复停止状态(由请求自然结束或主动停止后调用)
  */
 function resumeStop() {
-	isStop = false; // 重置停止状态
+	window.AbortManager.endAbortSession(); // 释放当前会话的 AbortController
 	removeLoadingIndicator(); // 移除加载指示器
-	// 清理所有追踪（确保状态一致）
+	// 清理所有追踪(确保状态一致)
 	activeTimeouts.clear(); // 清空 setTimeout 追踪
 	activeApiPromises.clear(); // 清空 API Promise 追踪
-	
+
 	updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
 	messageInput.focus(); // 聚焦到输入框
 }
@@ -822,11 +1139,8 @@ function setInputDisabled(disabled) {
  * @param isError - 是否为错误消息
  */
 function addMessageToChat(role, content, isError = false) {
-	// 如果停止状态为 true，直接返回
-	if (isStop) {
-		resumeStop();
-		return; // 直接返回
-	}
+	// 纯 UI 函数:仅负责把一条消息渲染到对话界面,不再承担任何"取消/重置状态机"副作用
+	// 取消语义已统一交由 abort-signal.js 的 AbortManager 管理
 	// 创建消息元素
 	const messageDiv = document.createElement('div'); // 创建消息容器
 	messageDiv.className = `message ${role}`; // 设置消息类名
@@ -945,19 +1259,30 @@ async function runSendFlow({
 	errorPrefix, // 错误前缀文案
 	needScroll = true, // 是否需要滚动
 }) {
+	// 缓存完整入参,供「重新发送」回调复用(闭包内 beforeSend/appendHistory 已绑定原始消息)
+	const opts = { uiState, statusText, beforeSend, appendHistory, errorPrefix, needScroll };
+	let pushedMsg = null; // 本次发送追加进历史的 user 消息对象(用于失败回滚)
 	try {
 		updateUIState(uiState); // 切换 UI 状态
 		updateStatus(statusText, 'info'); // 更新状态提示
 		beforeSend(); // 执行发送前 UI 操作
-		appendHistory(); // 写入对话历史
+		pushedMsg = appendHistory(); // 写入对话历史,返回本次追加的 user 消息对象
 		addLoadingIndicator(); // 添加加载指示器
 		if (needScroll) {
 			scrollToBottom(); // 按需滚动到底部
 		}
+		window.AbortManager.createAbortController(); // 为本轮会话创建取消信号
 		await callAIAndHandleResponse(); // 调用 AI 并处理响应
 		updateStatus('', ''); // 清空状态提示
 	} catch (error) {
-		handleAIError(error, errorPrefix); // 统一错误处理
+		// 失败回滚:本次请求根本未成功发送(鉴权失败/网络异常等),必须把刚追加进对话历史的
+		// user 消息剔除,否则它会永久污染后续成功对话的上下文(失败消息被反复带过去)。
+		if (pushedMsg) {
+			const idx = conversationHistory.indexOf(pushedMsg); // 定位刚追加的消息
+			if (idx !== -1) conversationHistory.splice(idx, 1); // 从历史中移除失败消息
+		}
+		// 传递「重新发送」回调,供错误气泡末尾的按钮复用(错误提示本身由 handleAIError 无条件渲染)
+		handleAIError(error, errorPrefix, () => runSendFlow(opts));
 	} finally {
 		updateUIState(UI_STATE.IDLE); // 恢复为空闲状态
 		messageInput.focus(); // 聚焦输入框
@@ -999,6 +1324,13 @@ function resetConversationRecords() {
  * 处理清空对话
  */
 function handleClearChat() {
+	// 待确认执行态保护：存在等待确认的代码块时,不允许直接清空,
+	// 先提示用户结束当前操作(点击停止),避免误以为按钮无响应或误清空未执行代码
+	if (pendingConfirmation) {
+		alert('当前有等待确认执行的代码块。\n请先点击「停止」按钮结束当前操作，再清空会话。'); // 友好提示
+		return; // 中止清空
+	}
+
 	// 确认是否清空
 	const confirmed = confirm('确定要清空所有对话记录吗？'); // 显示确认对话框
 	if (!confirmed) {

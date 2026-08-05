@@ -1,5 +1,23 @@
 
-
+/**
+ * 后端适配层 ark-api.js —— 双后端对话通道
+ *
+ * 职责:
+ * 1. callArkChat:直连火山引擎方舟 Responses API,需配置 api_key + api_model,
+ *    请求头携带 Authorization: Bearer;
+ * 2. callPrivateChat:走私服代理 /api/ark-chat,仅需 user_api_key(模型由私服侧决定),
+ *    由私服转发到 ARK 并记账;
+ * 3. updateConfig / getConfig:基于 localStorage 的配置读写(api_key / api_model)。
+ *
+ * 两个后端共用的约定:
+ * - 多轮上下文靠 previous_response_id 串联;首轮(历史长度为 2)直接把整段历史作为 input,
+ *   其余轮次仅传最后一条消息,以节省 Token;
+ * - 工具以 MCP 描述(name/description/inputSchema)传入,内部转换为 ARK 的
+ *   { type:'function', name, description, parameters } 格式;
+ * - 第四个参数 signal 为 AbortManager 合并的「超时 + 手动取消」信号,用于真正中断请求;
+ * - HTTP 非 2xx 时抛出的 Error 会挂载 status 字段,供 error-handler.js 按状态码
+ *   分级为 AUTH(401/403) / RATE_LIMIT(429) / NETWORK(5xx) / PARAM(400)。
+ */
 
 let PRIVATE_SERVER_URL = 'https://113.46.209.138'; // 私服地址
 let ARK_API_URL = 'https://ark.cn-beijing.volces.com/api/v3'; // API 基础地址
@@ -25,13 +43,14 @@ function getPrivateServerUrl() {
 }
 
 /**
- * 调用私服API进行对话
- * @param {*} mhistory 
- * @param {*} previousResponseId 
- * @param {*} tools 
- * @returns 
+ * 调用私服 API 进行对话(私服转发至 ARK 并记录 token 用量)
+ * @param {Array} mhistory - 消息历史数组
+ * @param {string|null} previousResponseId - 上一轮响应 ID(用于多轮上下文串联)
+ * @param {Array} tools - MCP 工具描述数组,内部转换为 ARK function 格式
+ * @param {AbortSignal|null} signal - 超时与手动取消的合并信号
+ * @returns {Promise<Object>} API 响应数据
  */
-async function callPrivateChat(mhistory, previousResponseId = null, tools = []) {
+async function callPrivateChat(mhistory, previousResponseId = null, tools = [], signal = null) {
 	try {
 		// 获取用户API Key（用于在私服中认证身份和记录token使用）
 		const config = getConfig();
@@ -69,6 +88,7 @@ async function callPrivateChat(mhistory, previousResponseId = null, tools = []) 
 				'Content-Type': 'application/json', // 设置内容类型为 JSON
 			},
 			body: JSON.stringify(requestBody), // 请求体
+			signal, // 绑定取消/超时信号(可能为空)
 		});
 
 		// 检查响应状态
@@ -78,11 +98,28 @@ async function callPrivateChat(mhistory, previousResponseId = null, tools = []) 
 			let errorMessage = `HTTP 错误! 状态码: ${response.status}`;
 			try {
 				const errorJson = JSON.parse(errorText);
-				errorMessage = errorJson.error || errorMessage;
+				// 兼容多种后台错误结构,优先提取最具体的真实原因文本:
+				// error.message / error / message / error_message
+				const extracted =
+					(errorJson.error && typeof errorJson.error === 'object' ? errorJson.error.message : undefined)
+					|| (typeof errorJson.error === 'string' ? errorJson.error : undefined)
+					|| (typeof errorJson.message === 'string' ? errorJson.message : undefined)
+					|| (typeof errorJson.error_message === 'string' ? errorJson.error_message : undefined)
+					|| errorJson.error; // 兜底:可能是对象字面量(转字符串时会变 [object Object],下方再补原始文本)
+				errorMessage = (extracted && extracted !== '[object Object]')
+					? String(extracted)
+					: errorMessage; // 提取失败则保留状态码提示
+				// 若提取出的仅为状态码提示(未拿到具体原因),把原始响应文本附在后面供排查
+				if (errorMessage === `HTTP 错误! 状态码: ${response.status}`) {
+					errorMessage += `\n${errorText}`;
+				}
 			} catch (e) {
 				errorMessage += `\n${errorText}`;
 			}
-			throw new Error(errorMessage); // 抛出错误
+			// 挂载 status 以便上层按 HTTP 状态码分级(401/429/5xx)
+			const err = new Error(errorMessage);
+			err.status = response.status;
+			throw err; // 抛出带状态码的错误
 		}
 
 		// 解析响应数据
@@ -101,14 +138,14 @@ async function callPrivateChat(mhistory, previousResponseId = null, tools = []) 
 // ========================================================================
 
 /**
- * 调用Responses API进行对话
+ * 直连火山引擎方舟 Responses API 进行对话
  * @param {Array} mhistory - 消息历史数组
- * @param {string} previousResponseId - 上一轮响应的ID（用于多轮对话）
- * @param {Array} tools - 工具数组
- * 
+ * @param {string|null} previousResponseId - 上一轮响应的 ID（用于多轮对话）
+ * @param {Array} tools - MCP 工具描述数组,内部转换为 ARK function 格式
+ * @param {AbortSignal|null} signal - 超时与手动取消的合并信号
  * @returns {Promise<Object>} API响应数据
  */
-async function callArkChat(mhistory, previousResponseId = null, tools = []) {
+async function callArkChat(mhistory, previousResponseId = null, tools = [], signal = null) {
 	try {
 		const config = getConfig();
 		// 检查ARK_API_KEY和ARK_MODEL是否为空
@@ -203,13 +240,17 @@ async function callArkChat(mhistory, previousResponseId = null, tools = []) {
 				Authorization: `Bearer ${config.key}`, // 设置授权头
 			},
 			body: JSON.stringify(requestBody), // 请求体
+			signal, // 绑定取消/超时信号(可能为空)
 		});
 
 		// 检查响应状态
 		if (!response.ok) {
 			// 如果响应不成功
 			const errorText = await response.text(); // 获取错误文本
-			throw new Error(`HTTP 错误! 状态码: ${response.status}\n${errorText}`); // 抛出错误
+			// 挂载 status 以便上层按 HTTP 状态码分级(401/429/5xx)
+			const err = new Error(`HTTP 错误! 状态码: ${response.status}\n${errorText}`);
+			err.status = response.status;
+			throw err; // 抛出带状态码的错误
 		}
 
 		// 解析响应数据

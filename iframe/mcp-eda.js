@@ -2,8 +2,15 @@
  * MCP (Model Context Protocol) 客户端封装
  * 符合 MCP 规范,支持工具、资源、提示的管理和调用
  * 通过 window.mcpEDA.xxx 方式访问
+ *
+ * 【数据角色说明】本文件顶层挂载的 window.mcpEDA.toolDescriptions / window.customeTools
+ * 是「出厂默认 1.0」数据的一部分;当本地数据库(IndexedDB)已激活时,
+ * data-store.js 会用数据库数据覆盖这些运行时缓存(含函数体重建),本文件不感知数据来源差异。
  */
 
+// 资源列表出厂默认为空数组(历史版本 resourceList 已废弃);
+// 数据库激活后由 data-store.js 的 refreshRuntimeCache() 用 resources 表数据覆盖
+window.jdbResourceList = [];
 
 // 参数验证（基于 JSON Schema）
 /**
@@ -82,26 +89,38 @@ async function callTool(params) {
 	try {
 		const { name, arguments: args } = params;
 		const [className, methodName] = name.split('.');
-		// 检查工具是否存在
-		const toolSchema = window.mcpEDA.listTools().tools.find(tool => tool.name === name) || 
+		// 检查工具是否存在(元工具/精选工具 → 原生API 依次查找)
+		const toolSchema = window.mcpEDA.listTools().tools.find(tool => tool.name === name) ||
 		window.jdbToolDescriptions.find(tool => tool.name === name);
-		if (toolSchema === null) {
+		if (!toolSchema) {
 			// 返回符合 MCP 规范的错误格式
 			return buildTextResponse(`工具不存在: ${name}`, true);
 		}
+		// 已禁用的工具不允许调用(enabled 显式为 false 才视为禁用)
+		if (toolSchema.enabled === false) {
+			return buildTextResponse(`工具已禁用: ${name}`, true);
+		}
 		// 验证工具参数
-		const validateResult = validateArguments(args, toolSchema?.inputSchema);
+		const validateResult = validateArguments(args || {}, toolSchema?.inputSchema);
 		if (validateResult !== null) {
 			return buildTextResponse(`工具参数验证失败: ${validateResult}`, false);
 		}
-		// 按照优先级调用工具(自定义工具名称格式为:className$methodName,原生API名称格式为:className.methodName)
+		// 调度优先级:优先自定义工具(mcpEDA 元工具 → customeTools 精选工具),无匹配时降级到原生API
+		// (自定义工具名称格式为:className$methodName,原生API名称格式为:className.methodName)
 		const mname = name.replace('.', '$');
-		const tool = window.mcpEDA[name] || window.customeTools[mname] || eda[className]?.[methodName];
-
-		// 执行工具处理函数(检查是否为原生API,如果是则使用位置参数调用)
-		const result = (window.mcpEDA[name] || window.customeTools[mname]) === null
-			? await tool(...Object.values(args) || {})
-			: await tool(args || {});
+		const customTool = window.mcpEDA[name] || window.customeTools[mname];
+		let result;
+		if (typeof customTool === 'function') {
+			// 自定义工具:使用参数对象整体调用
+			result = await customTool(args || {});
+		} else {
+			// 原生API兜底:使用位置参数展开调用
+			const nativeTool = eda[className]?.[methodName];
+			if (typeof nativeTool !== 'function') {
+				return buildTextResponse(`工具不存在: ${name}`, true);
+			}
+			result = await nativeTool(...Object.values(args || {}));
+		}
 
 		// 包装为符合 MCP 规范的返回格式
 		if (result !== null && ['string', 'number', 'boolean', 'object'].includes(typeof result)) {
@@ -110,8 +129,8 @@ async function callTool(params) {
 			return buildTextResponse(`工具执行失败 [${name}]: ${result}`, true);
 		}
 	} catch (error) {
-		// 包装错误信息为符合 MCP 规范的格式
-		return buildTextResponse(`工具执行失败 [${name}]: ${error.message}`, true);
+		// 包装错误信息为符合 MCP 规范的格式(name 需从 params 取值,避免作用域问题)
+		return buildTextResponse(`工具执行失败 [${params?.name}]: ${error.message}`, true);
 	}
 }
 
@@ -120,7 +139,12 @@ async function callTool(params) {
  * @returns {Object} 返回格式: { tools: [{ name: string, description: string, inputSchema: Object }] }
  */
 function listTools() {
-	return { tools: window.mcpEDA.toolDescriptions.concat(window.customeTools.toolDescriptions) };
+	// 过滤掉被禁用的工具(enabled 显式为 false 才视为禁用,出厂数据无该字段视为启用)
+	return {
+		tools: window.mcpEDA.toolDescriptions
+			.concat(window.customeTools.toolDescriptions)
+			.filter(tool => tool.enabled !== false)
+	};
 }
 
 /**
@@ -141,13 +165,13 @@ async function readResource(params) {
 	// 从参数对象中提取 uri
 	const { uri } = params;
 
-	// 查找资源
+	// 查找资源(资源不存在时抛出错误,避免访问 undefined 属性)
 	const resource = window.jdbResourceList.find(resource => resource.uri === uri);
-	// if (!resource) {
-	// 	const error = new Error(`资源不存在: ${uri}`);
-	// 	error.code = 'RESOURCE_NOT_FOUND';
-	// 	throw error;
-	// }
+	if (!resource) {
+		const error = new Error(`资源不存在: ${uri}`);
+		error.code = 'RESOURCE_NOT_FOUND';
+		throw error;
+	}
 
 	// 返回符合 MCP 规范的格式
 	return {
@@ -233,7 +257,7 @@ window.mcpEDA = {
 		{
 			name: 'listTools',
 			description: `
-列出所有自定义工具列表
+列出所有自定义工具列表(与 @{listResources}、@{listPrompts} 同属"能力清单"类工具)
 			`,
 			inputSchema: {
 				type: 'object',
@@ -243,7 +267,7 @@ window.mcpEDA = {
 		},
 		{
 			name: 'listResources',
-			description: '列出所有资源',
+			description: '列出所有资源(与 @{listTools}、@{listPrompts} 同属"能力清单"类工具)',
 			inputSchema: {
 				type: 'object',
 				properties: {},
@@ -252,7 +276,7 @@ window.mcpEDA = {
 		},
 		{
 			name: 'readResource',
-			description: '读取资源',
+			description: '读取资源(资源清单见 @{listResources})',
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -263,7 +287,7 @@ window.mcpEDA = {
 		},
 		{
 			name: 'listPrompts',
-			description: '列出所有提示',
+			description: '列出所有提示(获取具体提示前应先调用本工具发现可用 name,见 @{getPrompt})',
 			inputSchema: {
 				type: 'object',
 				properties: {},
@@ -272,7 +296,7 @@ window.mcpEDA = {
 		},
 		{
 			name: 'getPrompt',
-			description: '获取提示',
+			description: '获取提示(可用提示清单见 @{listPrompts})',
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -305,8 +329,9 @@ function searchTools({ keywords }) {
 		return [];
 	}
 
-	// 过滤并计算权重
+	// 过滤并计算权重(先剔除被禁用的原生API,enabled 显式为 false 才视为禁用)
 	const results = window.jdbToolDescriptions
+		.filter(m => m.enabled !== false)
 		.map(m => {
 			// 解析API信息
 			const msg = `name:${m.name},description:${m.description},inputSchema:${JSON.stringify(m.inputSchema)}`;
@@ -339,11 +364,15 @@ function searchTools({ keywords }) {
 		})
 		.filter(result => result !== null) // 过滤掉不匹配的结果
 		.sort((a, b) => b.score - a.score) // 按权重降序排序(命中关键词越多排在前面)
-		// 如果自定义api'className$methodName'与原api'className.methodName'相同,则将之替换
+		// 优先返回自定义封装:如果存在与原生API'className.methodName'对应的
+		// 自定义工具'className$methodName'(且未禁用),则用自定义工具描述替换原生结果
 		.map(result => {
-			const customApiName = result.name.replace('$', '.');
-			if (window.customeTools[customApiName] !== null) {
-				return window.customeTools[customApiName];
+			const customApiName = result.name.replace('.', '$');
+			const customDescription = window.customeTools.toolDescriptions.find(
+				tool => tool.name === customApiName && tool.enabled !== false
+			);
+			if (customDescription) {
+				return { ...customDescription, score: result.score };
 			}
 			return result;
 		});
@@ -430,7 +459,7 @@ async function sch_PrimitiveComponent$create({ uuid, libraryUuid, x, y, subPartN
 	if (typeof subPartName !== 'string') {
 		throw new Error('subPartName 必须为字符串（可为空字符串）');
 	}
-	const canvasSize = await getCanvasSize();
+	const canvasSize = await window.customeTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
 	if(x < 0 || x > canvasWidth || y < 0 || y > canvasHeight) {
@@ -462,7 +491,7 @@ async function sch_PrimitiveComponent$createBatch({ components }) {
 	for (let i = 0; i < components.length; i++) {
 		const comp = components[i];
 		try {
-			const result = await sch_PrimitiveComponent$create({
+			const result = await window.customeTools.sch_PrimitiveComponent$create({
 				uuid: comp.uuid,
 				libraryUuid: comp.libraryUuid,
 				x: comp.x,
@@ -529,7 +558,7 @@ async function sch_PrimitiveComponent$getAllPinsByPrimitiveIdBatch({ primitiveId
 		if (!primitiveId) {
 			throw new Error('primitiveIds 中的每个元素不能为空');
 		}
-		const result = await sch_PrimitiveComponent$getAllPinsByPrimitiveId({ primitiveId, invertY });
+		const result = await window.customeTools.sch_PrimitiveComponent$getAllPinsByPrimitiveId({ primitiveId, invertY });
 		results[primitiveId] = result.content;
 	}
 	return { content: results };
@@ -545,7 +574,7 @@ async function sch_PrimitiveComponent$modify({ primitiveId, property }) {
 	if (!property || typeof property !== 'object') {
 		throw new Error('property 必填且必须为对象');
 	}
-	const canvasSize = await getCanvasSize();
+	const canvasSize = await window.customeTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
 	if(property.x < 0 || property.x > canvasWidth || property.y < 0 || property.y > canvasHeight) {
@@ -567,7 +596,7 @@ async function sch_PrimitiveWire$create({ line, net = null, color = '#000000', l
 	if (color === null || color === undefined) {
 		throw new Error('color 可以不传,但必须不能为null或undefined');
 	}
-	const canvasSize = await getCanvasSize();
+	const canvasSize = await window.customeTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
 	for(let i = 0; i < line.length; i += 2) {
@@ -595,7 +624,7 @@ async function sch_PrimitiveWire$createBatch({ wires }) {
 	for (let i = 0; i < wires.length; i++) {
 		const wire = wires[i];
 		try {
-			const result = await sch_PrimitiveWire$create({
+			const result = await window.customeTools.sch_PrimitiveWire$create({
 				line: wire.line,
 				net: wire.net,
 				color: wire.color,
@@ -641,7 +670,7 @@ async function sch_PrimitiveWire$modify({ primitiveId, property }) {
 	if (!property || typeof property !== 'object') {
 		throw new Error('property 必填且必须为对象');
 	}
-	const canvasSize = await getCanvasSize();
+	const canvasSize = await window.customeTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
 	for(let i = 0; i < property.line.length; i += 2) {
@@ -663,7 +692,7 @@ async function sch_PrimitivePolygon$create({ line, color = null, fillColor = nul
 	if (!Array.isArray(line) || line.length < 8 || line.length % 2 !== 0 || `${line[0]}${line[1]}` !== `${line[line.length - 2]}${line[line.length - 1]}`) {
 		throw new Error('line 必须是长度不少于8且为偶数的坐标数组,至少包含4点且必须闭合');
 	}
-	const canvasSize = await getCanvasSize();
+	const canvasSize = await window.customeTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
 	for(let i = 0; i < line.length; i += 2) {
@@ -697,7 +726,7 @@ async function sch_PrimitivePolygon$createBatch({ boundsList }) {
 	for (let i = 0; i < boundsList.length; i++) {
 		const bounds = boundsList[i];
 		try {
-			const result = await sch_PrimitivePolygon$create({
+			const result = await window.customeTools.sch_PrimitivePolygon$create({
 				line: bounds.line,
 				color: bounds.color,
 				fillColor: bounds.fillColor,
@@ -807,7 +836,7 @@ async function calculateComponentBoundsBatch({ pinsList, expandMil = 10 }) {
 	// 批量调用单个函数
 	const results = [];
 	for (const pins of pinsList) {
-		const result = await calculateComponentBounds({ pins, expandMil });
+		const result = await window.customeTools.calculateComponentBounds({ pins, expandMil });
 		results.push(result.content);
 	}
 	return { content: results };
@@ -949,7 +978,7 @@ window.customeTools = {
 			description: `
 在原理图放置单个元件;
 x,y不能超过画布边界;
-如果有多个元件要放置,强烈建议使用 sch_PrimitiveComponent$createBatch 批量操作以提高效率;
+如果有多个元件要放置,强烈建议使用 @{sch_PrimitiveComponent$createBatch} 批量操作以提高效率;
 `,
 			inputSchema: {
 				type: 'object',
@@ -972,7 +1001,7 @@ x,y不能超过画布边界;
 			description: `
 批量在原理图放置元件;
 x,y不能超过画布边界;
-如果有多个元件要放置,必须使用此批量操作而不是逐个调用 sch_PrimitiveComponent$create;
+如果有多个元件要放置,必须使用此批量操作而不是逐个调用 @{sch_PrimitiveComponent$create};
 `,
 			inputSchema: {
 				type: 'object',
@@ -1038,7 +1067,7 @@ primitiveIds可以是单个图元ID(string)或图元ID数组(Array<string>);
 			name: 'sch_PrimitiveComponent$getAllPinsByPrimitiveId',
 			description: `
 获取单个元件的引脚列表;
-如果有多个元件要获取引脚坐标,强烈建议使用 sch_PrimitiveComponent$getAllPinsByPrimitiveIdBatch 批量操作以提高效率;
+如果有多个元件要获取引脚坐标,强烈建议使用 @{sch_PrimitiveComponent$getAllPinsByPrimitiveIdBatch} 批量操作以提高效率;
 `,
 			inputSchema: {
 				type: 'object',
@@ -1168,7 +1197,7 @@ x,y不能超过画布边界;
 创建单条原理图导线;
 line参数必须为连续坐标数组（长度为偶数且不少于4）,例如:[x1,y1,x2,y2,x3,y3,x4,y4];
 x,y不能超过画布边界;
-如果有多条导线要创建,强烈建议使用 sch_PrimitiveWire$createBatch 批量操作以提高效率;
+如果有多条导线要创建,强烈建议使用 @{sch_PrimitiveWire$createBatch} 批量操作以提高效率;
 `,
 			inputSchema: {
 				type: 'object',
@@ -1291,7 +1320,7 @@ net可以是单个网络名称(string)或网络名称数组(Array<string>);
 创建单个多边形;
 line参数必须为连续坐标数组（长度为偶数且不少于8,至少4点）;
 x,y不能超过画布边界;
-如果有多个边界要绘制,强烈建议使用 sch_PrimitivePolygon$createBatch 批量操作以提高效率;
+如果有多个边界要绘制,强烈建议使用 @{sch_PrimitivePolygon$createBatch} 批量操作以提高效率;
 `,
 			inputSchema: {
 				type: 'object',

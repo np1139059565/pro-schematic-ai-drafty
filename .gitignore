@@ -12,3 +12,6 @@ debug.log
 /readmes/
 /ai_schematic_private/
 /.*
+/*.7z
+/*.zip
+/server_stdout.log

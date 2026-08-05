@@ -11,8 +11,10 @@ AI巧绘 is an intelligent tool designed specifically for schematic designers, f
 
 1. **AI Chat**: Supports natural language Q&A with context management for quick answers to schematic design questions
 2. **Tool Calling**: AI can invoke EDA APIs to read schematic information, such as querying selected components and reading schematic structures
-3. **Code Execution**: Integrated with Volcano Engine ARK API to generate and execute code for design scenarios, supporting automated operations
-4. **Safety Confirmation**: Code execution requires user confirmation before running; an auto-execute toggle is available for streamlined workflows
+3. **Code Execution**: Integrated with Volcano Engine ARK API to generate and execute code for design scenarios; AI-generated code blocks support inline editing before execution
+4. **Knowledge Graph**: D3 force-directed graph visualizing tool call chains and component relationships, with search-to-center and node highlighting
+5. **Drawer Panel**: Six-tab drawer on the right (Graph / Prompts / Tools / EDA Functions / Resources / Logs) for one-click browsing
+6. **Safety Confirmation**: Code execution requires user confirmation before running; an auto-execute toggle is available for streamlined workflows
 
 ### Private Server System Features
 
@@ -104,6 +106,49 @@ Supported operations include:
 - Place components on the schematic
 - Create wire connections
 - Query and analyze schematic structure
+
+### Right-Side Drawer Panel
+
+The chat interface features a six-tab drawer on the right, switchable with one click:
+
+- **Graph**: D3 force-directed graph visualizing AI tool call chains and component relationships, with search-to-center and node highlighting
+- **Prompts**: 14 preset prompt templates (system prompts, workflow templates, scenario templates, etc.), click to insert into chat
+- **Tools**: Displays 33 available tools (27 custom tools + 6 MCP meta-tools), with search filtering and direct execution
+- **EDA Functions**: Complete list of EasyEDA native APIs for easy reference and invocation
+- **Resources**: Manage locally imported tools and prompt data, supporting import/export
+- **Logs**: Complete records of each AI conversation round, with JSON content supporting hierarchical folding
+
+![Drawer Panel](images/drawer.gif)
+
+### Knowledge Graph
+
+The graph panel presents AI tool call relationships and component association networks as a force-directed graph:
+
+- Node size reflects reference strength; edge width distinguishes strong/weak references
+- Click a node to highlight its association path (magenta stroke)
+- Search auto-centers on unique matching nodes
+- Hover over nodes to view detailed information
+
+![Knowledge Graph](images/graph.gif)
+
+### Editable Code Blocks
+
+AI-generated code blocks support inline editing while remaining executable:
+
+- Click a code block to enter edit mode and modify parameters or logic
+- Click execute after editing to run with the modified code
+- Edit and read-only modes are mutually exclusive to prevent accidental changes
+
+### Data Import & Export
+
+The Resources panel provides local data management:
+
+- **Import Default**: Load built-in tools and prompt data
+- **Import from Source**: Import custom tools or prompts from external JSON files
+- **Export**: Export current data as a JSON backup file
+- Data is stored in IndexedDB and persists after closing the extension
+
+![Data Import & Export](images/import-data.gif)
 
 ## Compatibility
 

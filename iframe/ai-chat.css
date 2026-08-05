@@ -87,6 +87,19 @@ body {
 	transform: scale(0.95);
 }
 
+/* 鉴权类错误时高亮配置按钮,引导用户快速修正 */
+.config-btn.config-btn-alert {
+	background: #e74c3c;
+	border-color: #c0392b;
+	animation: config-btn-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes config-btn-pulse {
+	0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.6); }
+	70% { box-shadow: 0 0 0 8px rgba(231, 76, 60, 0); }
+	100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+}
+
 /* 配置对话框样式 */
 .config-dialog {
 	position: fixed;
@@ -574,6 +587,42 @@ body {
 	cursor: not-allowed;
 }
 
+/* 代码块可编辑态：确认执行前允许实时修改代码内容 */
+.code-block code.code-editable {
+	outline: none;
+	cursor: text;
+	white-space: pre-wrap; /* 允许长行换行以便编辑阅读 */
+	word-break: break-word;
+}
+
+/* 代码内容被用户改动后的高亮提示（与原始副本不同） */
+.code-block code.code-editable.code-edited {
+	box-shadow: inset 0 0 0 2px #f1c40f; /* 内描边黄色提示已修改 */
+	background: #2d333b; /* 轻微提亮区分 */
+}
+
+/* 回退原始按钮（还原为 AI 生成代码） */
+.code-revert-btn {
+	padding: 6px 16px;
+	border: 1px solid #d0d3d9;
+	border-radius: 4px;
+	font-size: 12px;
+	cursor: pointer;
+	background: #fff;
+	color: #555;
+	transition: all 0.2s;
+}
+
+.code-revert-btn:hover:not(:disabled) {
+	background: #f4f5f7;
+	border-color: #b8bcc4;
+}
+
+.code-revert-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
 .code-result {
 	margin-top: 8px;
 	padding: 12px 16px;
@@ -593,4 +642,904 @@ body {
 }
 #messageInput{
 	height:auto !important;
+}
+
+/* ==================== 数据管理抽屉样式（dm- 前缀） ==================== */
+
+/* 抽屉根容器（全屏定位层） */
+.dm-drawer {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	z-index: 1100;
+}
+
+/* 半透明遮罩层（点击关闭抽屉） */
+.dm-overlay {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background: rgba(0, 0, 0, 0.4);
+}
+
+/* 右侧滑出面板 */
+.dm-panel {
+	position: absolute;
+	top: 0;
+	right: 0;
+	width: 90%;
+	/* max-width: 1100px; */
+	height: 100%;
+	background: #fff;
+	box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+	display: flex;
+	flex-direction: column;
+}
+
+/* 抽屉头部（沿用标题栏渐变风格） */
+.dm-header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 16px;
+	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+	color: #fff;
+	flex-wrap: wrap;
+}
+
+.dm-header h3 {
+	font-size: 16px;
+	font-weight: 600;
+}
+
+/* 数据状态徽标 */
+.dm-status {
+	padding: 2px 10px;
+	border-radius: 10px;
+	font-size: 12px;
+}
+
+/* 已激活状态（绿色） */
+.dm-status-on {
+	background: rgba(46, 204, 113, 0.85);
+}
+
+/* 未导入状态（灰色） */
+.dm-status-off {
+	background: rgba(255, 255, 255, 0.25);
+}
+
+/* 头部操作按钮组 */
+.dm-header-actions {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	margin-left: auto;
+	flex-wrap: wrap;
+}
+
+/* 通用按钮 */
+.dm-btn {
+	padding: 5px 10px;
+	background: rgba(102, 126, 234, 0.1);
+	border: 1px solid #c3cbf5;
+	border-radius: 4px;
+	color: #4a5568;
+	cursor: pointer;
+	font-size: 12px;
+	transition: all 0.2s;
+}
+
+/* 头部区域内的按钮采用半透明白色风格 */
+.dm-header .dm-btn {
+	background: rgba(255, 255, 255, 0.2);
+	border: 1px solid rgba(255, 255, 255, 0.3);
+	color: #fff;
+}
+
+.dm-btn:hover:not(:disabled) {
+	background: rgba(102, 126, 234, 0.25);
+}
+
+.dm-header .dm-btn:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.3);
+}
+
+.dm-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* 主操作按钮（保存） */
+.dm-btn-primary {
+	background: #667eea;
+	border-color: #667eea;
+	color: #fff;
+}
+
+.dm-btn-primary:hover:not(:disabled) {
+	background: #5568d3;
+}
+
+/* 危险操作按钮（删除） */
+.dm-btn-danger {
+	background: rgba(231, 76, 60, 0.85) !important;
+	border-color: rgba(231, 76, 60, 0.9) !important;
+	color: #fff !important;
+}
+
+.dm-btn-danger:hover:not(:disabled) {
+	background: #c0392b !important;
+}
+
+/* 关闭按钮 */
+.dm-close-btn {
+	width: 26px;
+	height: 26px;
+	background: rgba(255, 255, 255, 0.2);
+	border: 1px solid rgba(255, 255, 255, 0.3);
+	border-radius: 50%;
+	color: #fff;
+	cursor: pointer;
+	font-size: 16px;
+	line-height: 1;
+}
+
+.dm-close-btn:hover {
+	background: rgba(255, 255, 255, 0.35);
+}
+
+/* 分类标签页栏 */
+.dm-tabs {
+	display: flex;
+	gap: 4px;
+	padding: 8px 16px 0;
+	border-bottom: 1px solid #e0e0e0;
+	background: #fafafa;
+}
+
+/* 单个标签页按钮 */
+.dm-tab {
+	padding: 6px 14px;
+	border: 1px solid #e0e0e0;
+	border-bottom: none;
+	border-radius: 6px 6px 0 0;
+	background: #f0f0f0;
+	color: #666;
+	cursor: pointer;
+	font-size: 13px;
+}
+
+/* 激活的标签页 */
+.dm-tab-active {
+	background: #fff;
+	color: #667eea;
+	font-weight: 600;
+	border-color: #c3cbf5;
+}
+
+/* 搜索与工具栏 */
+.dm-toolbar {
+	display: flex;
+	gap: 8px;
+	padding: 8px 16px;
+	border-bottom: 1px solid #eee;
+}
+
+/* 搜索输入框 */
+.dm-search {
+	flex: 1;
+	padding: 6px 10px;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	font-size: 13px;
+}
+
+.dm-search:focus {
+	outline: none;
+	border-color: #667eea;
+}
+
+/* 主体区域：左列表 + 右编辑 */
+.dm-body {
+	flex: 1;
+	display: flex;
+	overflow: hidden;
+}
+
+/* 图谱 Tab 下：隐藏左侧列表与分隔条，编辑区占满整行用于承载画布 */
+.dm-body.dm-body-graph .dm-list-wrap,
+.dm-body.dm-body-graph .dm-splitter {
+	/* 图谱为全宽画布，左侧列表与分隔条在此 Tab 下完全无用，必须隐藏 */
+	display: none;
+}
+.dm-body.dm-body-graph .dm-edit {
+	flex: 1 1 100%;
+	width: 100%;
+	overflow: hidden;
+	padding: 0;
+}
+
+/* 左侧列表容器 */
+.dm-list-wrap {
+	width: 38%;
+	min-width: 260px;
+	display: flex;
+	flex-direction: column;
+	border-right: 1px solid #eee;
+}
+
+/* 条目列表 */
+.dm-list {
+	flex: 1;
+	overflow-y: auto;
+	list-style: none;
+}
+
+/* 单个条目 */
+.dm-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 12px;
+	border-bottom: 1px solid #f2f2f2;
+	cursor: pointer;
+	font-size: 13px;
+}
+
+.dm-item:hover {
+	background: #f5f7ff;
+}
+
+/* 选中的条目 */
+.dm-item-active {
+	background: #eef1fe;
+	border-left: 3px solid #667eea;
+}
+
+/* 条目名称 */
+.dm-item-name {
+	font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+	color: #333;
+	white-space: nowrap;
+}
+
+/* 已修改标记 */
+.dm-item-dot {
+	color: #f39c12;
+	font-size: 10px;
+}
+
+/* 已禁用标记 */
+.dm-item-off {
+	padding: 0 6px;
+	border-radius: 8px;
+	background: #eee;
+	color: #999;
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+/* 条目描述（超长省略） */
+.dm-item-desc {
+	flex: 1;
+	color: #999;
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 分页器 */
+.dm-pager {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 8px;
+	border-top: 1px solid #eee;
+}
+
+.dm-page-info {
+	font-size: 12px;
+	color: #666;
+}
+
+/* 右侧编辑面板 */
+.dm-edit {
+	flex: 1;
+	overflow-y: auto;
+	padding: 14px 16px;
+}
+
+/* 未选择条目时的占位提示 */
+.dm-edit-empty {
+	color: #999;
+	text-align: center;
+	margin-top: 60px;
+	font-size: 13px;
+}
+
+/* 编辑面板头部（名称 + 元信息） */
+.dm-edit-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 12px;
+	flex-wrap: wrap;
+}
+
+.dm-edit-name {
+	font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+	font-size: 15px;
+	font-weight: 600;
+	color: #333;
+}
+
+/* 元信息标签 */
+.dm-edit-meta {
+	padding: 2px 8px;
+	border-radius: 8px;
+	background: #f0f0f0;
+	color: #666;
+	font-size: 11px;
+}
+
+/* 只读模式横幅提示 */
+.dm-readonly-banner {
+	margin-bottom: 12px;
+	padding: 8px 12px;
+	background: #fff8e6;
+	border: 1px solid #f5d78e;
+	border-radius: 4px;
+	color: #8a6d3b;
+	font-size: 12px;
+}
+
+/* 表单区块 */
+.dm-field {
+	margin-bottom: 12px;
+}
+
+.dm-field-label {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 12px;
+	color: #666;
+	font-weight: 600;
+}
+
+/* 单行输入框 */
+.dm-input {
+	width: 100%;
+	padding: 6px 10px;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	font-size: 13px;
+}
+
+/* 多行文本域 */
+.dm-textarea {
+	width: 100%;
+	min-height: 80px;
+	padding: 8px 10px;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	font-size: 13px;
+	line-height: 1.5;
+	resize: vertical;
+}
+
+/* 大号文本域（提示词正文 / 函数实现） */
+.dm-textarea-lg {
+	min-height: 220px;
+}
+
+/* 代码编辑文本域（等宽字体深色底） */
+.dm-code {
+	font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+	background: #282c34;
+	color: #abb2bf;
+	font-size: 12px;
+}
+
+.dm-input:focus,
+.dm-textarea:focus {
+	outline: none;
+	border-color: #667eea;
+}
+
+.dm-input:disabled,
+.dm-textarea:disabled {
+	background: #f7f7f7;
+	color: #999;
+	cursor: not-allowed;
+}
+
+.dm-code:disabled {
+	background: #3a3f4a;
+	color: #888;
+}
+
+/* 启用开关标签 */
+.dm-enabled-label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 12px;
+	font-size: 12px;
+	color: #555;
+	cursor: pointer;
+}
+
+/* 引用关系提示区 */
+.dm-refs {
+	margin-bottom: 12px;
+	padding: 8px 12px;
+	background: #f5f7ff;
+	border: 1px solid #dde3fb;
+	border-radius: 4px;
+	font-size: 12px;
+	color: #555;
+}
+
+.dm-refs-line {
+	margin-bottom: 4px;
+	word-break: break-all;
+}
+
+.dm-refs-tip {
+	color: #999;
+	font-size: 11px;
+}
+
+/* 操作按钮区 */
+.dm-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-top: 4px;
+}
+
+/* 双击 @引用跳转后的「返回来源」按钮 */
+.dm-btn-back {
+	background: #eef1fb;
+	color: #5566c4;
+	border: 1px solid #c3cbf5;
+}
+.dm-btn-back:hover {
+	background: #e2e7fa;
+}
+
+/* 资源查看面板 */
+.dm-resource-view {
+	font-size: 13px;
+	color: #555;
+}
+
+/* 资源内容只读展示 */
+.dm-code-view {
+	margin-top: 4px;
+	padding: 10px;
+	background: #f8f9fa;
+	border: 1px solid #e0e0e0;
+	border-radius: 4px;
+	font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+	font-size: 12px;
+	white-space: pre-wrap;
+	word-break: break-all;
+	max-height: 300px;
+	overflow-y: auto;
+}
+
+/* ==================== JSON 树按括号层级折叠(日志详情) ==================== */
+
+/* JSON 树根容器 */
+.dm-json-tree {
+	font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+	font-size: 12px;
+	line-height: 1.6;
+	color: #333;
+}
+
+/* 单个可折叠单元(对象 / 数组) */
+.dm-json-fold {
+	margin: 2px 0 2px 14px;
+	border-left: 1px dashed #d7dbe6;
+	padding-left: 6px;
+}
+
+/* 折叠标题(仅含 '{' 或 '[' 字符,箭头符号由 ::before 提供),点击展开 / 收起 */
+.dm-json-fold > summary {
+	list-style: none;
+	cursor: pointer;
+	color: #333;
+	font-weight: 600;
+	user-select: none;
+}
+
+.dm-json-fold > summary::-webkit-details-marker {
+	display: none;
+}
+
+/* 折叠 / 展开箭头图标:默认收起显示在 '{'/'[' 之前(▶),展开显示 ▼ */
+.dm-json-fold > summary::before {
+	content: '▶';
+	font-size: 10px;
+	color: #8893a7;
+	margin-right: 3px;
+}
+
+.dm-json-fold[open] > summary::before {
+	content: '▼';
+}
+
+/* 折叠体容器:包裹 { } 或 [ ] 字面括号,与子项缩进对齐 */
+.dm-json-body {
+	white-space: pre-wrap;
+	word-break: break-all;
+	margin-top: 2px;
+}
+
+/* JSON 各类型着色 */
+.dm-json-key { color: #b5651d; }   /* 键名 */
+.dm-json-str { color: #2a7d2a; }   /* 字符串值 */
+.dm-json-num { color: #1f6feb; }   /* 数字 / 布尔 */
+.dm-json-null { color: #999; font-style: italic; } /* null */
+
+/* ==================== 日志折叠面板（list + detail 两栏） ==================== */
+
+/* 单轮日志卡片 */
+.dm-log-item {
+	margin-bottom: 12px;
+	border: 1px solid #eee;
+	border-radius: 6px;
+	overflow: hidden;
+	background: #fff;
+}
+
+/* 日志轮次标题栏 */
+.dm-log-turn {
+	padding: 6px 10px;
+	background: #f5f7ff;
+	font-size: 12px;
+	color: #555;
+	font-weight: 600;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+/* 标题栏复制按钮(替代原双击复制,点击复制该轮完整 JSON) */
+.dm-log-copy-btn {
+	font-size: 11px;
+	line-height: 1;
+	padding: 3px 10px;
+	background: #667eea;
+	color: #fff;
+	border: none;
+	border-radius: 3px;
+	cursor: pointer;
+}
+
+.dm-log-copy-btn:hover {
+	background: #5566c4;
+}
+
+/* 请求 / 响应区块 */
+.dm-log-payload {
+	padding: 8px 10px;
+}
+
+/* 折叠标题（请求/响应标签） */
+.dm-log-label {
+	font-size: 12px;
+	color: #667eea;
+	font-weight: 600;
+	margin: 6px 0 4px;
+	cursor: pointer;
+}
+
+/* 响应详情折叠容器 */
+.dm-log-detail {
+	padding: 0 10px 8px;
+}
+
+.dm-log-detail > summary {
+	list-style: none;
+	cursor: pointer;
+}
+
+.dm-log-detail > summary::-webkit-details-marker {
+	display: none;
+}
+
+/* ==================== @引用高亮 dm-ref ==================== */
+
+/* 可点击的引用片段 */
+.dm-ref {
+	color: #667eea;
+	background: rgba(102, 126, 234, 0.1);
+	border-radius: 3px;
+	padding: 0 3px;
+	cursor: pointer;
+}
+
+.dm-ref:hover {
+	background: rgba(102, 126, 234, 0.22);
+}
+
+/* 引用信息浮动卡 */
+.dm-ref-card {
+	position: fixed;
+	z-index: 1200;
+	max-width: 300px;
+	background: #fff;
+	border: 1px solid #c3cbf5;
+	border-radius: 6px;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+	padding: 10px 12px;
+	font-size: 12px;
+	color: #444;
+}
+
+.dm-ref-card-title {
+	font-weight: 600;
+	color: #333;
+	margin-bottom: 4px;
+}
+
+.dm-ref-card-body {
+	color: #666;
+	line-height: 1.5;
+	max-height: 160px;
+	overflow-y: auto;
+	word-break: break-all;
+}
+
+.dm-ref-card-warn {
+	color: #e67e22;
+	margin-top: 4px;
+}
+
+/* ==================== 可拖拽分隔条 dm-splitter ==================== */
+
+/* 列表与编辑面板之间的拖拽手柄 */
+.dm-splitter {
+	width: 5px;
+	flex: 0 0 5px;
+	cursor: col-resize;
+	background: #e6e8f0;
+	transition: background 0.15s;
+}
+
+.dm-splitter:hover,
+.dm-splitter.dm-dragging {
+	background: #667eea;
+}
+
+/* ==================== 关系图谱 graph-view ==================== */
+
+/* 图谱画布容器（复用编辑区主区位置，占据抽屉右侧全部空间） */
+.dm-graph-canvas {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	min-height: 420px;
+	overflow: hidden;
+	/* 纯色干净背景：移除原先的均匀小灰点平铺，避免缩放后节点与灰点重叠导致辨识困难 */
+	background: #fbfcfe;
+	border-radius: var(--dm-radius, 8px);
+}
+
+.dm-graph-svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	cursor: grab;
+}
+.dm-graph-svg:active {
+	cursor: grabbing;
+}
+
+/* 连线：默认态 */
+.dm-graph-link {
+	transition: opacity 0.2s, stroke-width 0.2s;
+}
+/* 命中高亮 / 淡出（搜索链路） */
+.dm-graph-node.dim,
+.dm-graph-label.dim,
+.dm-graph-link.dim {
+	opacity: 0.12;
+}
+.dm-graph-node.hl circle {
+	stroke: #ff7043;
+	stroke-width: 3px;
+}
+.dm-graph-link.hl {
+	stroke-width: 3px !important;
+	opacity: 1 !important;
+}
+
+/* 节点标签：加白色描边（paint-order），节点密集时相互覆盖仍可读 */
+.dm-graph-label {
+	font-size: 11px;
+	fill: #34495e;
+	pointer-events: none;
+	user-select: none;
+	paint-order: stroke;
+	stroke: #fff;
+	stroke-width: 3px;
+	stroke-linejoin: round;
+}
+
+/* 节点光标 */
+.dm-graph-node {
+	cursor: pointer;
+}
+
+/* 选中节点高亮（点击后持久，跨重绘保留，切 tab 回来仍可见） */
+/* 注意：描边色刻意选用与所有节点填充色（蓝/绿/橙/红/灰）都强对比的品红 #ff1493，
+   避免与 mcp 节点填充色 #f39c12（橙）过于接近导致「选中看不出」 */
+.dm-graph-node-selected circle {
+	stroke: #ff1493 !important;
+	stroke-width: 4px !important;
+}
+
+.dm-graph-empty {
+	fill: #95a5a6;
+	font-size: 14px;
+}
+
+/* 图例（右上角，可点击过滤） */
+.dm-graph-legend {
+	position: absolute;
+	top: 10px;
+	right: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	background: rgba(255, 255, 255, 0.92);
+	border: 1px solid #e3e6ef;
+	border-radius: 8px;
+	padding: 8px 10px;
+	font-size: 12px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+	z-index: 5;
+}
+.dm-graph-legend-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+	user-select: none;
+}
+.dm-graph-legend-item i {
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	display: inline-block;
+}
+.dm-graph-legend-item.off {
+	opacity: 0.4;
+	text-decoration: line-through;
+}
+
+/* 图谱工具栏（搜索 + 操作按钮） */
+.dm-graph-toolbar {
+	position: absolute;
+	top: 10px;
+	left: 12px;
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	z-index: 5;
+}
+.dm-graph-search {
+	width: 220px;
+	padding: 6px 10px;
+	border: 1px solid #dfe3ec;
+	border-radius: 6px;
+	font-size: 13px;
+	outline: none;
+}
+.dm-graph-search:focus {
+	border-color: #4e79f7;
+}
+
+/* 悬停 tooltip */
+/* 说明：原方案为 position:fixed 挂在 document.body，在 VSCode 扩展的 webview 内会被宿主层级裁剪/遮挡
+   （getBoundingClientRect 仍返回坐标，但视觉被压在 webview 内容之下），导致「菜单渲染了却看不到」。
+   现改为挂载到 .dm-panel（数据管理面板，overflow 默认可见）并使用 position:absolute 相对定位，
+   坐标由 JS 的 toHostXY() 换算为相对 .dm-panel 左上角的偏移，避免被宿主层级吃掉。 */
+.dm-graph-tooltip {
+	position: absolute;
+	z-index: 99999;
+	background: #2c3e50;
+	color: #fff;
+	padding: 8px 10px;
+	border-radius: 6px;
+	font-size: 12px;
+	max-width: 280px;
+	pointer-events: none;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+.dm-graph-tt-title {
+	font-weight: 600;
+	margin-bottom: 4px;
+	word-break: break-all;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+/* 标题前缀的类型色块，与画布节点配色一致 */
+.dm-graph-tt-dot {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex: 0 0 auto;
+}
+.dm-graph-tt-row {
+	line-height: 1.5;
+	word-break: break-all;
+}
+/* 描述区：多行文本，限制最大高度并滚动，避免超长描述撑爆 tooltip */
+.dm-graph-tt-desc {
+	margin: 4px 0;
+	line-height: 1.5;
+	max-height: 120px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
+	border-top: 1px solid rgba(255, 255, 255, 0.12);
+	padding-top: 4px;
+}
+.dm-graph-tt-desc code, .dm-graph-tt-row code {
+	background: rgba(255, 255, 255, 0.12);
+	padding: 0 3px;
+	border-radius: 3px;
+	font-size: 11px;
+}
+
+/* 右键上下文菜单 */
+/* 同 tooltip：改 absolute + 高 z-index，挂 .dm-panel 防止被 webview 宿主层级裁剪 */
+.dm-graph-ctxmenu {
+	position: absolute;
+	z-index: 99999;
+	background: #fff;
+	border: 1px solid #dfe3ec;
+	border-radius: 8px;
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+	padding: 4px;
+	min-width: 150px;
+}
+.dm-graph-ctx-item {
+	padding: 7px 12px;
+	font-size: 13px;
+	cursor: pointer;
+	border-radius: 5px;
+}
+.dm-graph-ctx-item:hover {
+	background: #f0f4ff;
+}
+.dm-graph-ctx-item.danger {
+	color: #e74c3c;
+}
+.dm-graph-ctx-item.danger:hover {
+	background: #fdecea;
+}
+
+/* 离线降级：文字版引用列表 */
+.dm-graph-fallback {
+	padding: 16px;
+	font-size: 13px;
+	line-height: 1.7;
+	color: #34495e;
+	overflow: auto;
+	height: 100%;
 }
