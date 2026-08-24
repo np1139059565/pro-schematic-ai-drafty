@@ -7,17 +7,21 @@
  * 2. 对话主流程:handleSendMessage → runSendFlow → callAIAndHandleResponse,
  *    经 ark-api.js 调用 ARK 直连或私服后端(每轮绑定 60s 超时 + 手动取消的合并信号);
  * 3. 工具调用流程:parseAIResponse 解析 function_call → generateCodeFromToolCalls 生成
- *    mcpEDA.callTool 代码块 → 用户「确认执行」(或开启自动执行后延迟 2 秒自动点击)
+ *    mcpProtocol.callTool 代码块 → 用户「确认执行」(或开启自动执行后延迟 2 秒自动点击)
  *    → executeToolCallsAndContinue → 结果以 function_call_output 回传模型继续下一轮;
  * 4. 配置管理:ARK API Key / Model / 私服开关的读写与即时生效(localStorage 持久化),
  *    配置变更时清空对话历史,避免 previous_response_id 跨服务端污染上下文;
  * 5. 调用日志:数据库激活时,每轮调用前经 dataStore.appendLog 写请求快照,
  *    响应返回后经 updateLogResponse 回填(fire-and-forget,失败不阻断对话);
- * 6. 系统消息:暴露 window.applySystemMessage 供 data-store.js 在 system_message
+ * 6. 系统消息:暴露 window.applySystemMessage 供 data-store.js 在 prompt_index
  *    被编辑后同步替换当前会话历史中的 system 消息,无需清空对话即可生效。
  *
+ * 运行时超级对象(全局 window 挂载点)的统一定义见 mcp/meta-tools.js(协议壳 window.mcpProtocol)与 mcp/curated-tools/index.js(精选工具 window.curatedTools)顶部「超级对象挂载区」,
+ * 本文件实际消费的运行时对象为 window.mcpProtocol(协议壳,见 L573/L833 等调用)与 window.promptList(见 L75 取 prompt_index);
+ * 均由对应源码文件集中挂载。
+ *
  * 依赖模块(均由 ai-chat.html 在本文件之前加载):
- *   ark-api.js(后端) / mcp-eda.js(工具执行) / data-store.js(数据与日志) /
+ *   ark-api.js(后端) / mcp/mcp-core.js + mcp/custom-tools.js(工具执行与超级对象定义) / data-store.js(数据与日志) /
  *   abort-signal.js(取消信号 AbortManager) / error-handler.js(错误分类 ErrorHandler)
  */
 
@@ -46,6 +50,8 @@ let conversationHistory = []; // 存储所有对话消息，格式：[{role: 'us
 let previousResponseId = null; // 上一轮响应的 ID（用于多轮对话）
 // 注意:取消语义已统一交由 abort-signal.js 的 AbortManager 管理,此处不再使用全局 isStop 标志
 let totalTokensAccumulated = 0; // 累加多轮对话的 total_tokens
+let lastStatusText = ''; // 最近一次 updateStatus 的状态文案(供 refreshStatusToken 复用)
+let lastStatusType = ''; // 最近一次 updateStatus 的状态类型(供 refreshStatusToken 复用)
 let currentLoadingId = null; // 当前加载指示器 ID
 
 // 异步操作追踪
@@ -65,13 +71,17 @@ let pendingConfirmation = false; // 是否存在等待用户确认执行的代�
 
 
 // 系统消息 - 用于描述 AI 角色和职责，用户可以在控制台临时修改系统消息，对 AI 巧绘进行定制化
-// 取出时还原 @{name} 引用标记为裸 name，保证送入模型的文本与标记化前逐字节一致（详见《系统设计说明》§4.5「@引用 标记与还原」）
-window.top.systemMessage = (window.promptList.find(prompt => prompt.name === 'system_message').messages[0].content.text || '')
-	.replace(/@\{([A-Za-z0-9_.\$]+)\}/g, '$1');
+// 取出时还原 @name 引用标记为裸 name，保证送入模型的文本与标记化前逐字节一致（详见《系统设计说明》§4.5「@引用 标记与还原」）
+// 系统消息承载于 prompt_index 提示词（全局索引），而非旧版的 system_message
+// 系统消息的唯一写入口为 applySystemMessage(见下方定义):既更新 window.top.systemMessage,
+// 又同步替换会话历史中的 system 消息,保证单一所有权、避免与 data-store.js 重复直写失步。
+applySystemMessage(window.dataStore.stripRefMarks(
+	window.promptList.find(prompt => prompt.name === 'prompt_index').messages[0].content.text || ''
+));
 
 /**
  * 应用新的系统消息并即时生效
- * 由 data-store.js 在数据库激活/system_message 提示词被编辑后调用:
+ * 由 data-store.js 在数据库激活/prompt_index 提示词被编辑后调用:
  * 除更新全局 systemMessage 外,还同步替换当前对话历史中的 system 消息,
  * 使修改无需清空对话即可在下一轮请求生效
  * @param {string} newText - 新的系统消息文本
@@ -84,6 +94,38 @@ function applySystemMessage(newText) {
 	}
 }
 window.applySystemMessage = applySystemMessage; // 暴露给 data-store.js 调用
+
+/**
+ * AI 请求异常统一收尾（消除 callAIAndHandleResponse / continueConversationAfterTools 两处重复的 catch 模板）
+ * 负责：① 从追踪集合移除 API Promise；② 移除加载指示器；③ 用户主动取消(abort)时静默返回 true；
+ * ④ 失败日志采集——若本次尚未落库请求快照(await 前 reject)，用 ark-api 挂在错误上的真实请求体补写，
+ * 再回填错误快照使日志面板可见失败原因。
+ * @param {Promise} apiPromise 本次 AI 请求的 Promise(可能为 undefined)
+ * @param {Error} error 捕获到的异常
+ * @param {number|undefined} chatLogId 成功路径已写入的日志行 ID(未写入则为 undefined)
+ * @returns {boolean} 返回 true 表示用户取消、调用方应静默 return；false 表示需继续 throw
+ */
+function cleanupAfterAIError(apiPromise, error, chatLogId) {
+	// 从追踪集合中移除（即使出错也要移除）
+	if (apiPromise) {
+		activeApiPromises.delete(apiPromise);
+	}
+	// 移除加载指示器
+	removeLoadingIndicator();
+	// 用户主动取消(abort)引发的错误不再作为失败处理
+	if (AbortManager.isCancelled()) {
+		return true;
+	}
+	// 失败请求日志采集:无论是否已在成功路径写入,只要本次请求拿到了真实请求体,
+	// 就确保有一行「请求快照 + 错误快照」落库。成功路径已写入则仅回填错误;
+	// 失败路径(await 之前 reject)则在此用错误上挂载的 requestBody 补写完整日志。
+	if (!chatLogId) {
+		// 失败分支:用 ark-api 挂在错误上的真实请求体补写请求快照
+		chatLogId = writeChatLog(error.requestBody || {});
+	}
+	updateChatLogResponse(chatLogId, { error: error.message });
+	return false;
+}
 
 // ==================== 日志写入（数据库激活时记录每轮 AI 调用） ====================
 
@@ -110,12 +152,15 @@ function startLogSession(firstUserText) {
 function writeChatLog(requestPayload) {
 	if (!isLoggingEnabled() || !currentSessionId) return null;
 	currentTurn += 1;
+	// 序列化嵌套对象后再存入 STRING 列,遵循业务表既定范式(JSON.stringify 后再存),
+	// 避免 INDEXEDDB 后端将对象退化为 "[object Object]" 导致界面乱码
 	return window.dataStore.appendLog({
 		sessionId: currentSessionId,
 		turn: currentTurn,
-		requestPayload,
-		promptSnapshot: window.top.systemMessage, // 系统消息快照
-		toolSnapshot: window.mcpEDA.toolDescriptions // 工具描述快照(含自定义工具)
+		requestPayload: JSON.stringify(requestPayload),
+		promptSnapshot: window.top.systemMessage, // 系统消息快照(字符串)
+		// 工具描述快照优先取接口真实 tools(真实接口数据),缺失时降级到前端镜像(元工具清单)
+		toolSnapshot: JSON.stringify((requestPayload && requestPayload.tools) || collectToolDescriptions() || [])
 	});
 }
 
@@ -123,7 +168,8 @@ function writeChatLog(requestPayload) {
 function updateChatLogResponse(logId, responsePayload) {
 	if (!logId || !window.dataStore.updateLogResponse) return;
 	try {
-		window.dataStore.updateLogResponse(logId, responsePayload);
+		// 序列化嵌套对象后再存入 STRING 列,避免 INDEXEDDB 后端退化为 "[object Object]"
+		window.dataStore.updateLogResponse(logId, JSON.stringify(responsePayload));
 	} catch (error) {
 		console.error('[ai-chat] 日志响应回填失败:', error);
 	}
@@ -192,6 +238,12 @@ function installGlobalRejectionGuard() {
 	});
 }
 
+/**
+ * 初始化对话宿主。
+ * 注册全局异常兜底处理器(拦截 EDA 原生 API 逃逸的未捕获 rejection/同步错误),
+ * 绑定 UI 事件与输入框交互,拉取历史会话与提示词列表,最后触发首轮问候。
+ * 整个生命周期只应被调用一次。
+ */
 function init() {
 	// 注册全局异常兜底处理器（方案A：拦截 EDA 原生 API 逃逸的未捕获 rejection/同步错误）
 	// 背景：嘉立创 EDA 宿主原生 API（如 eda.sch_PrimitiveComponent.create）在内部 UI 校验失败、
@@ -485,11 +537,11 @@ function generateCodeFromToolCalls(toolCalls) {
 		// 生成工具调用代码
 		if (toolCalls.length === 1) {
 			// 单个工具调用
-			codeLines.push(`const result = await mcpEDA.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`); // 调用工具
+			codeLines.push(`const result = await mcpProtocol.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`); // 调用工具
 			codeLines.push('resp.data = result;'); // 设置结果
 		} else {
 			// 多个工具调用
-			codeLines.push(`const result${i} = await mcpEDA.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`); // 调用工具
+			codeLines.push(`const result${i} = await mcpProtocol.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`); // 调用工具
 			if (i === toolCalls.length - 1) {
 				// 最后一个工具调用，设置结果
 				codeLines.push(`resp.data = [${Array.from({ length: toolCalls.length }, (_, idx) => `result${idx}`).join(', ')}];`); // 设置结果数组
@@ -522,7 +574,7 @@ async function executeSingleToolCall(toolCall) {
 		}
 
 		// 调用 MCP 工具
-		const result = await window.mcpEDA.callTool({
+		const result = await window.mcpProtocol.callTool({
 			name: toolName, // 工具名称
 			arguments: argumentsObj, // 工具参数
 		});
@@ -574,6 +626,21 @@ async function executeToolCalls(toolCalls) {
 }
 
 /**
+ * 汇总首轮请求应携带的「元工具」描述清单
+ * 渐进式注入策略:首轮仅暴露 window.mcpProtocol 的协议壳元工具(callTool/listTools/searchTools 等),
+ * 精选工具(window.curatedTools)与 EDA 原生 API 不进首屏,由模型经 listTools({scenario}) /
+ * searchTools({keywords}) 按需下钻获取,避免全量注入淹没上下文。
+ * 过滤显式禁用项(enabled === false);清单为空时返回 null 以便调用方省略 tools 字段。
+ * @returns {Array|null} 元工具描述数组;无可用工具时返回 null
+ */
+function collectToolDescriptions() {
+	const metaTools = (window.mcpProtocol && Array.isArray(window.mcpProtocol.metaToolSchemas))
+		? window.mcpProtocol.metaToolSchemas : [];
+	const tools = metaTools.filter(tool => tool && tool.enabled !== false);
+	return tools.length > 0 ? tools : null;
+}
+
+/**
  * 调用 AI API 并处理响应
  * 包括调用 API、解析响应、添加 AI 回复到界面和历史
  */
@@ -581,32 +648,35 @@ async function callAIAndHandleResponse() {
 
 	// 确保系统消息在对话历史中
 	const isAddTool = ensureSystemMessage(); // 确保系统消息存在
-	const chatLogId = writeChatLog(conversationHistory); // 记录本轮请求快照(同步,失败不影响主流程)
-	
+
 	// 创建 API Promise 并追踪
 	let apiPromise;
+	let chatLogId;
 	try {
 		// 根据配置选择调用 ARK API 或私服 API
-		apiPromise = 
-			window.ArkAPI[usePrivateServer?'callPrivateChat':'callArkChat'](
-				conversationHistory, previousResponseId,isAddTool ? window.mcpEDA.toolDescriptions : null,
+		apiPromise =
+			window.ArkAPI[usePrivateServer ? 'callPrivateChat' : 'callArkChat'](
+				conversationHistory, previousResponseId, isAddTool ? collectToolDescriptions() : null,
 				window.AbortManager.createTimeoutSignal(60000)); // 调用 API(绑定 60s 超时+手动取消信号)
-		
+
 		// 追踪 API Promise
 		activeApiPromises.add(apiPromise); // 添加到追踪集合
-		
+
 		// 等待 API 响应
 		const response = await apiPromise;
-		updateChatLogResponse(chatLogId, response); // 回填响应快照
-		
+		// 采集接口真实请求参数(来自 fetch 真实发出的 requestBody),而非前端累积 history
+		chatLogId = writeChatLog(response.request);
+		updateChatLogResponse(chatLogId, response.data); // 回填真实响应快照
+
 		// 从追踪集合中移除
 		activeApiPromises.delete(apiPromise); // 移除追踪
 		// 累加 total_tokens(加空值保护,响应缺 usage 时不抛异常)
-		totalTokensAccumulated += (response.usage && response.usage.total_tokens) || 0; // 累加 tokens
+		totalTokensAccumulated += (response.data.usage && response.data.usage.total_tokens) || 0; // 累加 tokens
 		console.info(`total_tokens 累计：${totalTokensAccumulated}`, 'history', conversationHistory);//打印对话历史和累计 tokens
+		refreshStatusToken(); // 刷新状态栏 token 消耗统计(并入 statusText)
 
 		// 解析 AI 回复
-		const parsedResponse = parseAIResponse(response); // 解析响应
+		const parsedResponse = parseAIResponse(response.data); // 解析响应
 		addAssistantMessageToHistory(parsedResponse.content, parsedResponse.toolCalls); // 添加到对话历史
 
 		// 更新上一轮响应 ID（使用公共函数）
@@ -635,17 +705,10 @@ async function callAIAndHandleResponse() {
 			removeLoadingIndicator(); // 移除加载动画
 		}
 	} catch (error) {
-		// 从追踪集合中移除（即使出错也要移除）
-		if (apiPromise) {
-			activeApiPromises.delete(apiPromise); // 移除追踪
+		// 统一异常收尾：移除追踪/加载指示器、abort 静默返回、失败日志补写回填
+		if (cleanupAfterAIError(apiPromise, error, chatLogId)) {
+			return; // 用户主动取消,不记录为错误
 		}
-		// 移除加载指示器
-		removeLoadingIndicator(); // 移除加载动画
-		// 用户主动取消(abort)引发的错误不再作为失败处理
-		if (AbortManager.isCancelled()) {
-			return; // 直接返回,不记录为错误
-		}
-		updateChatLogResponse(chatLogId, { error: error.message }); // 记录错误快照
 		throw error; // 重新抛出错误
 	}
 
@@ -768,11 +831,11 @@ async function executeEditedCode(codeText, codeContainer, button, toolCalls) {
 		button.disabled = true; // 禁用确认按钮
 		button.textContent = '执行中...'; // 更新按钮文本
 
-		// 将编辑后的代码动态执行：mcpEDA 为生成代码所依赖的全局调用入口
-		// 生成代码形如 `const resp = ...; await mcpEDA.callTool(...); return resp;`
-		// 包裹在 async IIFE 中以支持 await，并通过 new Function 注入 mcpEDA 入参
-		const runCode = new Function('mcpEDA', 'return (async () => {\n' + codeText + '\n})();'); // 编译
-		const resp = await runCode(window.mcpEDA); // 执行并取回 resp
+		// 将编辑后的代码动态执行：mcpProtocol 为生成代码所依赖的全局调用入口
+		// 生成代码形如 `const resp = ...; await mcpProtocol.callTool(...); return resp;`
+		// 包裹在 async IIFE 中以支持 await，并通过 new Function 注入 mcpProtocol 入参
+		const runCode = new Function('mcpProtocol', 'return (async () => {\n' + codeText + '\n})();'); // 编译
+		const resp = await runCode(window.mcpProtocol); // 执行并取回 resp
 
 		// 把 resp 包装成与原生 executeToolCalls 兼容的结果结构
 		// 兼容字段：tool_call_id（用于回传 Responses API 的 call_id）、content、isError
@@ -861,35 +924,38 @@ async function continueConversationAfterTools(toolInputMessages) {
 	addLoadingIndicator(); // 添加加载指示器
 	updateUIState(UI_STATE.EXECUTING); // 切换到代码执行中状态
 	updateStatus('AI 正在处理结果...', 'info'); // 更新状态提示
-	
+
 	// 创建 API Promise 并追踪
-	const chatLogId = writeChatLog(toolInputMessages); // 记录本轮请求快照(工具循环沿用同一会话)
 	let apiPromise;
+	let chatLogId;
 	try {
 		// 根据配置选择调用 ARK API 或私服 API
 		apiPromise = window.ArkAPI[usePrivateServer ? 'callPrivateChat' : 'callArkChat'](
-				toolInputMessages, // 工具执行结果（作为 input 传入）
+			toolInputMessages, // 工具执行结果（作为 input 传入）
 			previousResponseId, // 上一轮响应 ID
 			null, // 无新增工具
 			window.AbortManager.createTimeoutSignal(60000) // 绑定 60s 超时+手动取消信号
 		); // 调用 API
-		
+
 		// 追踪 API Promise
 		activeApiPromises.add(apiPromise); // 添加到追踪集合
-		
+
 		// 等待 API 响应
 		const response = await apiPromise;
-		updateChatLogResponse(chatLogId, response); // 回填响应快照
-		
+		// 采集接口真实请求参数(来自 fetch 真实发出的 requestBody),而非前端累积 messages
+		chatLogId = writeChatLog(response.request);
+		updateChatLogResponse(chatLogId, response.data); // 回填真实响应快照
+
 		// 从追踪集合中移除
 		activeApiPromises.delete(apiPromise); // 移除追踪
-		
+
 		// 累加 total_tokens(加空值保护,响应缺 usage 时不抛异常)
-		totalTokensAccumulated += (response.usage && response.usage.total_tokens) || 0; // 累加 tokens
+		totalTokensAccumulated += (response.data.usage && response.data.usage.total_tokens) || 0; // 累加 tokens
 		console.info('history', conversationHistory, `total_tokens 累计：${totalTokensAccumulated}`);//打印对话历史和累计 tokens
+		refreshStatusToken(); // 刷新状态栏 token 消耗统计(并入 statusText)
 
 		// 解析响应
-		const parsedResponse = parseAIResponse(response); // 解析响应
+		const parsedResponse = parseAIResponse(response.data); // 解析响应
 		addAssistantMessageToHistory(parsedResponse.content, parsedResponse.toolCalls); // 添加到对话历史
 
 		// 更新上一轮响应 ID（使用公共函数）
@@ -917,17 +983,10 @@ async function continueConversationAfterTools(toolInputMessages) {
 			messageInput.focus(); // 聚焦输入框
 		}
 	} catch (error) {
-		// 从追踪集合中移除（即使出错也要移除）
-		if (apiPromise) {
-			activeApiPromises.delete(apiPromise); // 移除追踪
+		// 统一异常收尾：移除追踪/加载指示器、abort 静默返回、失败日志补写回填
+		if (cleanupAfterAIError(apiPromise, error, chatLogId)) {
+			return; // 用户主动取消,不记录为错误
 		}
-		// 移除加载指示器
-		removeLoadingIndicator(); // 移除加载动画
-		// 用户主动取消(abort)引发的错误不再作为失败处理
-		if (AbortManager.isCancelled()) {
-			return; // 直接返回,不记录为错误
-		}
-		updateChatLogResponse(chatLogId, { error: error.message }); // 记录错误快照
 		throw error; // 重新抛出错误
 	}
 
@@ -1356,12 +1415,37 @@ function handleClearChat() {
  * @param type - 状态类型 ('info', 'error', 'success')
  */
 function updateStatus(text, type = '') {
-	statusText.textContent = text; // 设置状态文本
+	// 缓存最近一次状态文案与类型,供 refreshStatusToken 在无新状态事件时重渲染(保留 token 串)
+	lastStatusText = text;
+	lastStatusType = type;
+	statusText.textContent = buildStatusText(text); // 设置状态文本(含累计 token 串)
 	statusText.className = 'status-text'; // 重置类名
 	if (type) {
 		// 如果有类型
 		statusText.className += ' ' + type; // 添加类型类名
 	}
+}
+
+/**
+ * 拼接状态文案与累计 token 消耗串
+ * 仅当存在 token 累计消耗时,在状态文本后追加「 · 已用 N tokens」,无消耗时不显示
+ * @param text - 原始状态文案
+ * @returns {string} 追加 token 串后的最终状态文案
+ */
+function buildStatusText(text) {
+	const base = text || '';
+	return totalTokensAccumulated > 0
+		? `${base} · 已用 ${totalTokensAccumulated} tokens`
+		: base;
+}
+
+/**
+ * 仅在 token 累计消耗变化时刷新状态栏
+ * 复用上一次 updateStatus 的状态文案与类型,避免 token 累加后状态栏不刷新或被覆盖丢失
+ * 由每次响应累加 total_tokens 后调用,替代原独立的 updateTokenInfo(原写入标题栏 span)
+ */
+function refreshStatusToken() {
+	updateStatus(lastStatusText, lastStatusType);
 }
 
 /**
@@ -1384,10 +1468,10 @@ function loadConfig() {
 		// 从 localStorage 读取配置
 		const savedApiKey = localStorage.getItem('api_key'); // 读取 API Key
 		const savedModel = localStorage.getItem('api_model'); // 读取 API Model
-		const savedUsePrivateServer = localStorage.getItem('use_private_server') === 'true'; // 读取是否使用私服
+		const rawPrivateFlag = localStorage.getItem('use_private_server'); // 读取私服标记原始值(从未保存过时为 null)
 
-		// 根据 model 是否为空决定是否使用私服（如果 model 为空，默认使用私服）
-		usePrivateServer = savedUsePrivateServer !== null ? savedUsePrivateServer : !savedModel; // 如果未保存过配置，根据 model 是否为空决定
+		// 优先采用持久化的私服标记;从未保存过(首次使用)时回退:根据 model 是否为空决定(为空默认走私服)
+		usePrivateServer = rawPrivateFlag !== null ? rawPrivateFlag === 'true' : !savedModel;
 
 		// 调用 ark-api.js 的更新配置函数
 		window.ArkAPI.updateConfig(savedApiKey || '', savedModel || ''); // 更新配置
@@ -1479,6 +1563,9 @@ function handleSaveConfig() {
 
 		// 同步全局私服状态（确保后续请求使用最新的 API 类型）
 		usePrivateServer = newUsePrivateServer; // 更新使用私服状态
+
+		// 持久化私服开关标记(与 model 联动:私服时 model 为空),供刷新后 loadConfig 恢复相同通道
+		localStorage.setItem('use_private_server', String(newUsePrivateServer)); // 保存私服标记
 
 		// 更新 ARK API 模块配置
 		window.ArkAPI.updateConfig(apiKey, model); // 更新配置

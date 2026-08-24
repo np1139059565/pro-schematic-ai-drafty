@@ -1,9 +1,5 @@
-// 原生API查询列表
-//
-// 【数据角色说明】本文件是「出厂默认 1.0」原生API描述数据的载体;
-// 当本地数据库(IndexedDB)已激活时,data-store.js 会用数据库数据覆盖 window.jdbToolDescriptions,
-// 本文件数据仅在未激活或数据库被删除后作为兜底数据源使用。
-window.jdbToolDescriptions= [
+// 出厂默认 1.0 原生 API 数据;数据库激活后由 data-store.js 覆盖 window.edaApi(本文件仅作兜底)
+window.edaApi= [
 	{
 		"name": "dmt_Board.copyBoard",
 		"description": "复制板子",

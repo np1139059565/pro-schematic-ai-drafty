@@ -3,7 +3,7 @@
 	"uuid": "7f5625494d16493692e4532279c15b58",
 	"displayName": "AI巧绘",
 	"description": "通过AI助手，可以快速生成原理图，并自动放置元件",
-	"version": "1.0.6",
+	"version": "1.0.7",
 	"publisher": "LCY",
 	"engines": {
 		"eda": "^2.3.0"

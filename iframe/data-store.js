@@ -2,8 +2,8 @@
  * 数据层 data-store.js —— 「本地数据化」核心模块
  *
  * 职责(单一职责:只管数据,不管界面):
- * 1. 启动时捕获「出厂默认 1.0」运行时快照(promptList / jdbToolDescriptions /
- *    mcpEDA.toolDescriptions / customeTools 及其函数体),作为恢复默认与导出的数据源;
+ * 1. 启动时捕获「出厂默认 1.0」运行时快照(promptList / edaApi /
+ *    mcpProtocol.metaToolSchemas / curatedTools 及其函数体),作为恢复默认与导出的数据源;
  * 2. 基于 AlaSQL 的 INDEXEDDB 引擎管理本地数据库 ProSchematicAiDB
  *    (业务四表 prompts / tools / resources / meta + 日志两表 chat_sessions / chat_logs);
  * 3. 提供数据维护能力:
@@ -16,16 +16,16 @@
  *            提示词新增/删除(addPrompt/deletePrompt)、引用检测(findReferences)、
  *            引用标记还原(stripRefMarks)、图谱数据派生(buildGraph);
  * 4. 数据库激活后,通过 refreshRuntimeCache() 将数据库数据覆盖到 window.* 运行时缓存
- *    (含 new Function 重建函数体),使 mcp-eda.js / ai-chat.js 等消费方无感知数据来源;
+ *    (含 new Function 重建函数体),使 mcp/curated-tools/index.js / mcp/meta-tools.js / ai-chat.js 等消费方无感知数据来源;
  * 5. 管理独立的两张日志表 chat_sessions / chat_logs,提供会话与调用日志的存储 API
  *    (createSession / appendLog / updateLogResponse / getSessions / getSessionLogs / clearLogs),
  *    日志仅追加、不参与导入/导出/恢复默认,写日志职责在 ai-chat.js。
  *
  * 数据流:
- *   未激活: 原始 JS 常量(mcp-prompt.js / eda-api.js / mcp-eda.js) → window.* → 消费方
+ *   未激活: 原始 JS 常量(mcp/prompts.js / eda-api.js / mcp/curated-tools/index.js / mcp/meta-tools.js / mcp/resources.js) → window.* → 消费方
  *   已激活: IndexedDB → refreshRuntimeCache() → window.* → 消费方
  *
- * 加载顺序要求:必须在 mcp-prompt.js / eda-api.js / mcp-eda.js 与 vendor/alasql.min.js
+ * 加载顺序要求:必须在 mcp/prompts.js / eda-api.js / mcp/curated-tools/index.js / mcp/meta-tools.js / mcp/resources.js 与 .vendor/alasql.min.js
  * 之后、editor-drawer.js / ai-chat.js 之前加载。
  */
 
@@ -44,8 +44,9 @@
 	const EXPORT_FILE_PREFIX = 'psa-export.v';
 
 	// ==================== 出厂默认快照 ====================
-	// 本文件在原始 JS(mcp-prompt.js / eda-api.js / mcp-eda.js)之后加载,
-	// 此时 window.* 均为原始常量,直接持有引用即可作为出厂快照。
+	// 本文件在原始 JS(mcp/prompts.js / eda-api.js / mcp/curated-tools/index.js / mcp/meta-tools.js / mcp/resources.js)之后加载,
+	// 此时 window.* 均为原始常量(即各原始 JS 文件所定义的全局对象,如 mcp/meta-tools.js 顶部「超级对象挂载区」所列),
+	// 直接持有引用即可作为出厂快照。
 	// 注意:refreshRuntimeCache() 永远以「赋新数组/新对象」方式覆盖 window.*,
 	// 绝不原地修改,因此快照引用始终保持出厂状态不被污染。
 
@@ -63,9 +64,9 @@
 	/**
 	 * 在沙箱中执行源码文本,拦截其中对 window.* 的赋值并提取数据。
 	 * 仅捕获以下目标,避免执行未知的副作用代码:
-	 *   window.promptList / window.jdbToolDescriptions /
-	 *   window.mcpEDA.toolDescriptions / window.customeTools.toolDescriptions /
-	 *   window.mcpEDA[name] / window.customeTools[name](函数实现)。
+	 *   window.promptList / window.edaApi / window.resourceList /
+	 *   window.mcpProtocol.metaToolSchemas / window.curatedTools.curatedToolSchemas /
+	 *   window.mcpProtocol[name] / window.curatedTools[name](函数实现)。
 	 * 返回结构化结果,未出现的字段为 undefined。
 	 */
 	function extractSourceAssignments(code) {
@@ -73,16 +74,16 @@
 		// 捕获器:记录目标属性写入的值
 		const capture = (target, key, value) => {
 			if (target === 'promptList') result.promptList = value;
-			else if (target === 'jdbToolDescriptions') result.jdbToolDescriptions = value;
+			else if (target === 'edaApi') result.edaApi = value;
 			else if (target === 'mcpDesc') result.mcpToolDescriptions = value;
 			else if (target === 'customDesc') result.customToolDescriptions = value;
 		else if (target === 'mcpFn') { result.mcpFunctions = result.mcpFunctions || {}; result.mcpFunctions[key] = value; }
 		else if (target === 'customFn') { result.customFunctions = result.customFunctions || {}; result.customFunctions[key] = value; }
 		};
-		// 用 Proxy 构造可层层拦截的 window/mcpEDA/customeTools
+		// 用 Proxy 构造可层层拦截的 window/mcpProtocol/curatedTools
 		const makeProxy = (kind, keyName) => new Proxy({}, {
 			get(_t, prop) {
-				// 继续向下代理,支持 window.mcpEDA.toolDescriptions
+				// 继续向下代理,支持 window.mcpProtocol.metaToolSchemas
 				return makeProxy(kind, prop);
 			},
 			set(_t, prop, value) {
@@ -90,7 +91,7 @@
 				return true;
 			},
 			apply(_t, _this, args) {
-				// 处理函数形式的导出:window.mcpEDA[name] = (fn)
+				// 处理函数形式的导出:window.mcpProtocol[name] = (fn)
 				capture(kind, keyName, args[0]);
 				return undefined;
 			}
@@ -98,22 +99,23 @@
 		const sandboxWindow = new Proxy({}, {
 			get(_t, prop) {
 				if (prop === 'promptList') return makeProxy('promptList');
-				if (prop === 'jdbToolDescriptions') return makeProxy('jdbToolDescriptions');
-				if (prop === 'mcpEDA') return makeProxy('mcpDesc');
-				if (prop === 'customeTools') return makeProxy('customDesc');
+				if (prop === 'edaApi') return makeProxy('edaApi');
+			if (prop === 'mcpProtocol') return makeProxy('mcpDesc');
+			if (prop === 'curatedTools') return makeProxy('customDesc');
 				return undefined;
 			},
 			set(_t, prop, value) {
 				if (prop === 'promptList') result.promptList = value;
-				else if (prop === 'jdbToolDescriptions') result.jdbToolDescriptions = value;
+				else if (prop === 'edaApi') result.edaApi = value;
+				else if (prop === 'resourceList') result.resourceList = value;
 				captureStandalone(prop, value);
 				return true;
 			}
 		});
-		// 兼容 window.mcpEDA[name] = (fn) 中 name 为动态键的写法
+		// 兼容 window.mcpProtocol[name] = (fn) 中 name 为动态键的写法
 		function captureStandalone(prop, value) {
-			if (prop === 'mcpEDA') result._mcpProxy = makeProxy('mcpDesc');
-			if (prop === 'customeTools') result._customProxy = makeProxy('customDesc');
+		if (prop === 'mcpProtocol') result._mcpProxy = makeProxy('mcpDesc');
+		if (prop === 'curatedTools') result._customProxy = makeProxy('customDesc');
 		}
 		// 执行源码(严格模式避免静默失败),仅用于读取赋值,不关心返回值
 		try {
@@ -128,9 +130,9 @@
 
 	/**
 	 * 将源码提取出的原始数据构建为统一的业务行结构(供 applyImport 合并)。
-	 * 工具区分为 jdb(原生API)/ mcp(元工具)/ custom(精选工具)三类。
+	 * 工具区分为 jdb(原生API)/ meta(元工具)/ curated(精选工具)三类。
 	 */
-	function buildRowsFromSource(promptList, jdbList, mcpDescList, customDescList, mcpFns, customFns) {
+	function buildRowsFromSource(promptList, jdbList, mcpDescList, customDescList, mcpFns, customFns, resourceList) {
 		const time = nowISO();
 		const prompts = (promptList || []).map(p => ({
 			name: p.name,
@@ -149,33 +151,37 @@
 					description: t.description || '',
 					input_schema: JSON.stringify(t.inputSchema || t.input_schema || {}),
 					impl_code: impl,
-					source,
-					enabled: 1,
+					domain: t.domain ?? null,
+				source,
+				enabled: true,
 					is_modified: false,
 					updated_at: time
 				});
 			}
 		};
 		pushTool(jdbList, 'jdb', null);
-		pushTool(mcpDescList, 'mcp', mcpFns);
-		pushTool(customDescList, 'custom', customFns);
-		return { prompts, tools, resources: buildFactoryResourceRows() };
+		pushTool(mcpDescList, 'meta', mcpFns);
+		pushTool(customDescList, 'curated', customFns);
+		const resources = (resourceList && resourceList.length) ? resourceList : buildFactoryResourceRows();
+		return { prompts, tools, resources };
 	}
 
 	/** 出厂默认快照(所有恢复默认/导出出厂 JS 操作的唯一数据源) */
 	const factoryDefaults = {
-		/** 出厂提示词列表(mcp-prompt.js) */
+		/** 出厂提示词列表(mcp/prompts.js) */
 		promptList: window.promptList || [],
 		/** 出厂原生API描述列表(eda-api.js) */
-		jdbToolDescriptions: window.jdbToolDescriptions || [],
-		/** 出厂 MCP 元工具描述列表(mcp-eda.js) */
-		mcpToolDescriptions: (window.mcpEDA && window.mcpEDA.toolDescriptions) || [],
-		/** 出厂精选工具描述列表(mcp-eda.js) */
-		customToolDescriptions: (window.customeTools && window.customeTools.toolDescriptions) || [],
+		edaApi: window.edaApi || [],
+		/** 出厂 MCP 元工具描述列表(mcp/meta-tools.js 挂载的 window.mcpProtocol) */
+		mcpToolDescriptions: (window.mcpProtocol && window.mcpProtocol.metaToolSchemas) || [],
+		/** 出厂精选工具描述列表(mcp/curated-tools/index.js 挂载的 window.curatedTools) */
+		customToolDescriptions: (window.curatedTools && window.curatedTools.curatedToolSchemas) || [],
 		/** 出厂 MCP 元工具函数体映射 */
-		mcpFunctions: collectFunctions(window.mcpEDA),
+		mcpFunctions: collectFunctions(window.mcpProtocol),
 		/** 出厂精选工具函数体映射 */
-		customFunctions: collectFunctions(window.customeTools)
+		customFunctions: collectFunctions(window.curatedTools),
+		/** 出厂资源列表(mcp/resources.js 定义的 window.resourceList,内置海量嘉立创原理图资料集) */
+		resourceList: window.resourceList || []
 	};
 
 	// ==================== 模块内部状态 ====================
@@ -211,11 +217,12 @@
 			+ `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 	}
 
-	/** 根据提示词名称推断分类(用于抽屉界面分组展示) */
+	/** 根据提示词名称推断分类(用于抽屉界面分组展示)
+	 * 提示命名分类:prompt_index(全局索引)/domain_*(流程提示)/knowledge_*(知识叶)/execution_*(执行叶) */
 	function categorizeByName(name) {
-		if (name === 'system_message') return 'system';
-		if (name.startsWith('workflow')) return 'workflow';
-		if (name.startsWith('business_rules')) return 'business_rules';
+		if (name === 'prompt_index') return 'index';
+		if (name.startsWith('domain')) return 'domain';
+		if (name.startsWith('knowledge')) return 'knowledge';
 		if (name.startsWith('execution')) return 'execution';
 		return 'other';
 	}
@@ -383,7 +390,7 @@
 		const time = nowISO();
 		const rows = [];
 		// 原生API:无函数体(调用时由 callTool 走 eda.* 原生对象)
-		for (const tool of factoryDefaults.jdbToolDescriptions) {
+		for (const tool of factoryDefaults.edaApi) {
 			rows.push({
 				name: tool.name,
 				description: tool.description || '',
@@ -403,7 +410,8 @@
 				description: tool.description || '',
 				input_schema: JSON.stringify(tool.inputSchema || {}),
 				impl_code: fn ? fn.toString() : null,
-				source: 'mcp',
+				domain: tool.domain ?? null,
+				source: 'meta',
 				enabled: true,
 				is_modified: false,
 				updated_at: time
@@ -417,7 +425,8 @@
 				description: tool.description || '',
 				input_schema: JSON.stringify(tool.inputSchema || {}),
 				impl_code: fn ? fn.toString() : null,
-				source: 'custom',
+				domain: tool.domain ?? null,
+				source: 'curated',
 				enabled: true,
 				is_modified: false,
 				updated_at: time
@@ -426,9 +435,18 @@
 		return rows;
 	}
 
-	/** 由出厂快照构建 resources 表行数组(出厂默认无资源,返回空数组) */
+	/** 由出厂快照构建 resources 表行数组 */
 	function buildFactoryResourceRows() {
-		return [];
+		const time = nowISO();
+		return factoryDefaults.resourceList.map(res => ({
+			uri: res.uri,
+			name: res.name,
+			description: res.description || '',
+			mime_type: res.mime_type || 'text/markdown',
+			content: res.content || '',
+			is_modified: false,
+			updated_at: time
+		}));
 	}
 
 	/** 在出厂快照中查找指定工具的出厂行(用于单条恢复默认),找不到返回 null */
@@ -439,6 +457,11 @@
 	/** 在出厂快照中查找指定提示词的出厂行(用于单条恢复默认),找不到返回 null */
 	function buildFactoryPromptRow(name) {
 		return buildFactoryPromptRows().find(row => row.name === name) || null;
+	}
+
+	/** 在出厂快照中查找指定资源的出厂行(用于单条恢复默认),找不到返回 null */
+	function buildFactoryResourceRow(uri) {
+		return buildFactoryResourceRows().find(row => row.uri === uri) || null;
 	}
 
 	// ==================== 导入合并策略 ====================
@@ -504,30 +527,39 @@
 			messages: JSON.parse(row.messages)
 		}));
 
-		// ---- 工具描述(按来源分流,携带 enabled 供 mcp-eda.js 过滤) ----
-		const jdbDescriptions = [];
-		const mcpDescriptions = [];
-		const customDescriptions = [];
-		for (const row of cache.tools) {
-			const description = {
-				name: row.name,
-				description: row.description,
-				inputSchema: JSON.parse(row.input_schema),
-				enabled: row.enabled !== false
-			};
-			if (row.source === 'jdb') jdbDescriptions.push(description);
-			else if (row.source === 'mcp') mcpDescriptions.push(description);
-			else customDescriptions.push(description);
+	// ---- 工具描述(按来源分流,携带 enabled 与 domain 供 mcp/meta-tools.js 与 mcp/curated-tools/index.js 过滤) ----
+	const jdbDescriptions = [];
+	const mcpDescriptions = [];
+	const customDescriptions = [];
+	for (const row of cache.tools) {
+		// domain 取自数据库行;旧库行缺该字段时回退出厂快照同名工具,保证 listTools({scenario}) 场景过滤始终可用
+		let domain = row.domain;
+		if (domain == null) {
+			const factoryRow = buildFactoryToolRow(row.name);
+			domain = factoryRow ? factoryRow.domain : null;
 		}
-		window.jdbToolDescriptions = jdbDescriptions;
-		window.mcpEDA.toolDescriptions = mcpDescriptions;
-		window.customeTools.toolDescriptions = customDescriptions;
+		const description = {
+			name: row.name,
+			description: row.description,
+			inputSchema: JSON.parse(row.input_schema),
+			enabled: row.enabled !== false,
+			domain
+		};
+		if (row.source === 'jdb') jdbDescriptions.push(description);
+		else if (row.source === 'meta') mcpDescriptions.push(description);
+		else customDescriptions.push(description);
+	}
+		window.edaApi = jdbDescriptions;
+		// 保活协议层对象后再注入 schema,统一收口至 ensureMCPObjects(),避免时序异常路径下 undefined
+		ensureMCPObjects();
+		window.mcpProtocol.metaToolSchemas = mcpDescriptions;
+		window.curatedTools.curatedToolSchemas = customDescriptions;
 
 		// ---- 函数体重建(用户可编辑 impl_code;重建失败时回退出厂函数并告警) ----
 		for (const row of cache.tools) {
-			if (!row.impl_code || (row.source !== 'mcp' && row.source !== 'custom')) continue;
-			const target = row.source === 'mcp' ? window.mcpEDA : window.customeTools;
-			const factoryFn = row.source === 'mcp'
+			if (!row.impl_code || (row.source !== 'meta' && row.source !== 'curated')) continue;
+			const target = row.source === 'meta' ? window.mcpProtocol : window.curatedTools;
+			const factoryFn = row.source === 'meta'
 				? factoryDefaults.mcpFunctions[row.name]
 				: factoryDefaults.customFunctions[row.name];
 			try {
@@ -541,11 +573,11 @@
 		}
 
 		// ---- 资源列表 ----
-		window.jdbResourceList = cache.resources.map(row => ({
+		window.resourceList = cache.resources.map(row => ({
 			uri: row.uri,
 			name: row.name,
 			description: row.description,
-			mimeType: row.mime_type,
+			mime_type: row.mime_type,
 			content: row.content
 		}));
 
@@ -553,13 +585,13 @@
 		applySystemPromptFromList(window.promptList);
 	}
 
-	/** 从提示词列表提取 system_message 并应用到会话运行时 */
+	/** 从提示词列表提取 prompt_index（系统消息承载者）并应用到会话运行时 */
 	function applySystemPromptFromList(promptList) {
-		const systemPrompt = promptList.find(prompt => prompt.name === 'system_message');
+		const systemPrompt = promptList.find(prompt => prompt.name === 'prompt_index');
 		const raw = systemPrompt && systemPrompt.messages && systemPrompt.messages[0]
 			&& systemPrompt.messages[0].content && systemPrompt.messages[0].content.text;
 		if (!raw) return;
-		// 发送前将 @{name} 引用标记还原为裸 name，保证送入模型的文本与标记化前逐字节一致，不改变模型行为
+		// 发送前将 @name 引用标记还原为裸 name，保证送入模型的文本与标记化前逐字节一致，不改变模型行为
 		const text = stripRefMarks(raw);
 		if (typeof window.applySystemMessage === 'function') {
 			window.applySystemMessage(text);
@@ -568,19 +600,31 @@
 		}
 	}
 
+	/**
+	 * 确保协议层运行时对象存在(最小骨架保活)。
+	 * 拆分后 window.mcpProtocol / window.curatedTools 分属 mcp/meta-tools.js 与 mcp/curated-tools/index.js 两个文件,
+	 * 在「从内存导入」「激活」「删除数据库后恢复出厂」等早于源码挂载或时序异常的路径下可能为 undefined;
+	 * 故此处先确保两个运行时对象存在(缺失则初始化最小空骨架),避免后续写入「Cannot set properties of undefined」。
+	 * 统一收口原本散落在 refreshRuntimeCache / restoreFactoryRuntime 两处的相同保活逻辑。
+	 */
+	function ensureMCPObjects() {
+		if (!window.mcpProtocol || typeof window.mcpProtocol !== 'object') window.mcpProtocol = {};
+		if (!window.curatedTools || typeof window.curatedTools !== 'object' || !window.curatedTools.curatedToolSchemas) window.curatedTools = {};
+	}
+
 	/** 将 window.* 运行时缓存全部恢复为出厂快照(删除数据库后调用) */
 	function restoreFactoryRuntime() {
+		ensureMCPObjects(); // 保活协议层对象,避免时序异常路径下 undefined
 		window.promptList = factoryDefaults.promptList;
-		window.jdbToolDescriptions = factoryDefaults.jdbToolDescriptions;
-		window.mcpEDA.toolDescriptions = factoryDefaults.mcpToolDescriptions;
-		window.customeTools.toolDescriptions = factoryDefaults.customToolDescriptions;
+		window.edaApi = factoryDefaults.edaApi;
+		window.mcpProtocol.metaToolSchemas = factoryDefaults.mcpToolDescriptions;
+		window.curatedTools.curatedToolSchemas = factoryDefaults.customToolDescriptions;
 		for (const [name, fn] of Object.entries(factoryDefaults.mcpFunctions)) {
-			window.mcpEDA[name] = fn;
+			window.mcpProtocol[name] = fn;
 		}
 		for (const [name, fn] of Object.entries(factoryDefaults.customFunctions)) {
-			window.customeTools[name] = fn;
+			window.curatedTools[name] = fn;
 		}
-		window.jdbResourceList = [];
 		applySystemPromptFromList(factoryDefaults.promptList);
 	}
 
@@ -596,36 +640,30 @@
 			.replace(/"(?:\\.|[^"\\])*"/g, ' '); // 双引号字符串
 
 	/**
-	 * 从文本提取 @{name} 形式的显式引用名称（工具名/提示词名，允许字母数字下划线.$）
-	 * 采用花括号包裹语法（@{...}），可精确界定边界、规避裸 name 前缀子串误报；
-	 * 同时兼容历史遗留的裸 @name 写法，保证平滑过渡。
+	 * 从文本提取 @name 形式的显式引用名称（工具名/提示词名，允许字母数字下划线.$）
+	 * 解析器只承认带 @ 前缀的显式标记，对未加前缀的裸名称不做子串猜测，从而杜绝"前缀同名"造成的误报。
 	 * @param {string} text 待扫描文本
 	 * @returns {string[]} 去重后的引用名称列表
 	 */
 	function extractNames(text) {
 		if (!text) return [];
 		const names = new Set();
-		// 优先匹配花括号包裹形式 @{name}
-		for (const m of (text.match(/@\{([A-Za-z0-9_.\$]+)\}/g) || [])) {
-			names.add(m.slice(2, -1));
-		}
-		// 兼容裸 @name 形式（仅当其后紧跟非花括号的字母/数字/下划线/.$ 时）
+		// 匹配 @name 显式引用形式
 		for (const m of (text.match(/@([A-Za-z0-9_.\$]+)/g) || [])) {
-			const name = m.slice(1);
-			if (!names.has(name)) names.add(name);
+			names.add(m.slice(1));
 		}
 		return Array.from(names);
 	}
 
 	/**
-	 * 将提示词/描述中的 @{name} 引用标记还原为裸 name
+	 * 将提示词/描述中的 @name 引用标记还原为裸 name
 	 * 用于提示词发送给 AI 前的预处理：保证送入模型的文本与标记化前逐字节一致，不改变模型行为。
-	 * @param {string} text 含 @{name} 标记的文本
+	 * @param {string} text 含 @name 标记的文本
 	 * @returns {string} 还原后的文本
 	 */
 	function stripRefMarks(text) {
 		if (!text) return text;
-		return text.replace(/@\{([A-Za-z0-9_.\$]+)\}/g, '$1');
+		return text.replace(/@([A-Za-z0-9_.\$]+)/g, '$1');
 	}
 
 	/** 收集当前有效全量数据（已激活取数据库缓存，否则取出厂快照），用于引用索引构建 */
@@ -645,8 +683,8 @@
 		}));
 		const tools = [];
 		// 注意：必须携带 description，否则 buildGraph 构造工具节点时 t.description 为 undefined，
-		// 会导致图谱悬浮 tooltip 显示「（无描述）」而 eda-api.js / mcp-eda.js 中明明有描述。
-		for (const t of factoryDefaults.jdbToolDescriptions) tools.push({ name: t.name, impl_code: null, description: t.description });
+		// 会导致图谱悬浮 tooltip 显示「（无描述）」而 eda-api.js / mcp/curated-tools/index.js / mcp/meta-tools.js 中明明有描述。
+		for (const t of factoryDefaults.edaApi) tools.push({ name: t.name, impl_code: null, description: t.description });
 		for (const t of factoryDefaults.mcpToolDescriptions) {
 			tools.push({ name: t.name, impl_code: factoryDefaults.mcpFunctions[t.name] ? factoryDefaults.mcpFunctions[t.name].toString() : null, description: t.description });
 		}
@@ -661,15 +699,15 @@
 		const index = {};
 		const ensure = (n) => (index[n] || (index[n] = { calls: [], calledBy: [], referencedByPrompts: [] }));
 		for (const t of tools) {
-			// 实现代码中的 @{} 显式引用与全局调用 → tool 调用关系(tool_call)
+			// 实现代码中的 @name 显式引用与全局调用 → tool 调用关系(tool_call)
 			const names = extractNames(SANITIZE_FN(t.impl_code || ''));
 			for (const n of names) {
 				if (n === t.name) continue; // 跳过自引用
 				ensure(t.name).calls.push({ source: t.name, target: n, kind: 'tool' }); // t 调用 n
 				ensure(n).calledBy.push({ source: n, target: t.name, kind: 'tool' }); // n 被 t 调用
 			}
-			// 描述文本中的 @{} 标记(对标提示词侧标记化,使工具描述侧也能参与图谱引用)
-			// 例如工具描述书写 @{lib_Device$search} 时,建立该工具对目标工具的引用关系
+			// 描述文本中的 @name 标记(对标提示词侧标记化,使工具描述侧也能参与图谱引用)
+			// 例如工具描述书写 @lib_Device$search 时,建立该工具对目标工具的引用关系
 			const descNames = extractNames(t.description || '');
 			for (const n of descNames) {
 				if (n === t.name) continue; // 跳过自引用
@@ -706,9 +744,9 @@
 	 *
 	 * 节点类型（type）：prompt（提示词）/ custom（精选工具）/ mcp（元工具）/ jdb（EDA 原生 API）
 	 * 连线类型（refType）与强弱（strength）：
-	 *   - prompt_ref      提示词引用提示词（messages 中 @{name} 显式引用）       强
-	 *   - prompt_tool     提示词引用函数（正文 @{工具名}，含「推荐工具」清单）    强
-	 *   - tool_call       函数调用函数（impl_code 中 window.customeTools/mcpEDA 调用） 强
+	 *   - prompt_ref      提示词引用提示词（messages 中 @name 显式引用）       强
+	 *   - prompt_tool     提示词引用函数（正文 @工具名，含「推荐工具」清单）    强
+	 *   - tool_call       函数调用函数（impl_code 中 window.curatedTools/mcpProtocol 调用） 强
 	 *   - describes       描述-实现配对（同 name 的 description/inputSchema 与 impl_code 绑定） 强
 	 *   - native_fallback 自定义工具降级调用原生 API（impl_code 中 eda.* 调用）  弱
 	 *   - example_call    提示词内 getPrompt({name:'x'}) 调用范例（保留原样不标记部分） 弱
@@ -731,7 +769,7 @@
 		for (const p of all.prompts) {
 			addNode(p.name, 'prompt', categorizeByName(p.name), p.name, p.description);
 			const body = (p.description || '') + '\n' + JSON.stringify(p.messages || []);
-			// 显式 @{name} 引用 → prompt_ref 或 prompt_tool
+			// 显式 @name 引用 → prompt_ref 或 prompt_tool
 			for (const n of extractNames(body)) {
 				if (n === p.name) continue;
 				const isPrompt = all.prompts.some(x => x.name === n);
@@ -751,9 +789,9 @@
 		}
 
 		// 2. 工具节点 + 函数侧引用（tool_call / native_fallback / describes）
-		const customNames = new Set((window.customeTools.toolDescriptions || []).map(t => t.name));
-		const mcpNames = new Set((window.mcpEDA.toolDescriptions || []).map(t => t.name));
-		const jdbNames = new Set((window.jdbToolDescriptions || []).map(t => t.name));
+		const customNames = new Set((window.curatedTools.curatedToolSchemas || []).map(t => t.name));
+		const mcpNames = new Set((window.mcpProtocol.metaToolSchemas || []).map(t => t.name));
+		const jdbNames = new Set((window.edaApi || []).map(t => t.name));
 		for (const t of all.tools) {
 			let type = 'custom';
 			if (jdbNames.has(t.name)) type = 'jdb';
@@ -765,23 +803,32 @@
 		// 故此处不再生成自环边；实现/描述配对关系由节点自身半径与 tooltip 入/出度表达，无需自环边。
 		// （graph-view.js 的 draw() 也已对 source===target 做双保险过滤）
 			const code = SANITIZE_FN(t.impl_code || '');
-			// 显式 @{name} 引用（若实现内书写 @{}）→ tool_call
+			// 显式 @name 引用（若实现内书写 @name）→ tool_call
 			for (const n of extractNames(code)) {
 				if (n === t.name) continue;
 				links.push({ source: t.name, target: n, refType: 'tool_call', strength: 'strong' });
 			}
-			// window.customeTools.x() / window.mcpEDA.x() 全局路径调用 → tool_call（强）
-			for (const m of (code.match(/window\.(?:customeTools|mcpEDA)\.([A-Za-z0-9_.\$]+)\s*\(/g) || [])) {
-				const callee = m.match(/window\.(?:customeTools|mcpEDA)\.([A-Za-z0-9_.\$]+)/)[1];
-				if (callee === t.name) continue;
-				links.push({ source: t.name, target: callee, refType: 'tool_call', strength: 'strong' });
-			}
-			// eda.* 原生 API 调用 → native_fallback（弱，降级路径）
-			for (const m of (code.match(/\beda\.[A-Za-z0-9_.\$]+/g) || [])) {
-				const api = m.slice(4);
-				if (api === t.name) continue;
-				links.push({ source: t.name, target: api, refType: 'native_fallback', strength: 'weak' });
-			}
+		// window.curatedTools.x() / window.mcpProtocol.x() 全局路径调用 → tool_call（强）
+		// 该识别逻辑与编辑器 extractVisibleRefs 对真实调用的高亮同源,保证图谱边与代码高亮一致
+		// 仅取「第一级方法名」(字符集不含 '.'),切断链式调用后缀(.find 等),避免把 toolDescriptions.find 误判为被调用工具
+		for (const m of (code.match(/window\.(?:curatedTools|mcpProtocol)\.([A-Za-z0-9_$]+)\s*\(/g) || [])) {
+			const callee = m.match(/window\.(?:curatedTools|mcpProtocol)\.([A-Za-z0-9_$]+)/)[1];
+			if (callee === t.name) continue;
+			links.push({ source: t.name, target: callee, refType: 'tool_call', strength: 'strong' });
+		}
+		// eda.* 原生 API 调用 → native_fallback（弱，降级路径）
+		// 同上,与编辑器 extractVisibleRefs 对 eda.* 的高亮同源
+		for (const m of (code.match(/\beda\.[A-Za-z0-9_.\$]+/g) || [])) {
+			const api = m.slice(4);
+			if (api === t.name) continue;
+			links.push({ source: t.name, target: api, refType: 'native_fallback', strength: 'weak' });
+		}
+		}
+
+		// 3. 资源节点：由 window.resourceList 提供（出厂默认集在 mcp/resources.js 定义，
+		//    激活后来自 cache.resources）。提示词以 @uri 引用资源时，此处补全节点使 prompt_tool 连线落地。
+		for (const r of (window.resourceList || [])) {
+			addNode(r.uri, 'resource', null, r.name || r.uri, r.description || '');
 		}
 
 		return { nodes, links };
@@ -887,8 +934,11 @@
 
 	/** 获取指定会话的调用日志（按轮次正序） */
 	function getSessionLogs(sessionId) {
+		// 按 log_id 去重:写入侧因并发 persistLogs / 会话重载可能产生重复条目,
+		// 在读取出口去重可保证导出(复制全部)内容单份,且不动写入逻辑避免数据丢失风险。
+		const seen = new Set();
 		return logCache
-			.filter(x => x.session_id === sessionId)
+			.filter(x => x.session_id === sessionId && !seen.has(x.log_id) && seen.add(x.log_id))
 			.sort((a, b) => (a.turn || 0) - (b.turn || 0));
 	}
 
@@ -952,16 +1002,16 @@
 
 		/**
 		 * 从源码导入(真正的激活起点,无需任何文件选择)。
-		 * 源码文件(mcp-prompt.js / eda-api.js / mcp-eda.js)在页面加载时已由宿主执行,
-		 * 其数据已存在于运行时内存的 window.promptList / window.jdbToolDescriptions /
-		 * window.mcpEDA / window.customeTools 全局对象中。
+		 * 源码文件(mcp/prompts.js / eda-api.js / mcp/curated-tools/index.js / mcp/meta-tools.js / mcp/resources.js)在页面加载时已由宿主执行,
+		 * 其数据已存在于运行时内存的 window.promptList / window.edaApi /
+		 * window.mcpProtocol / window.curatedTools / window.resourceList 全局对象中。
 		 * 本方法直接读取这些内存中的源码常量(即 factoryDefaults 快照)构建业务行并写入库激活,
 		 * 不弹任何文件选择框。
 		 */
 		async importFromMemory() {
 			const rows = buildRowsFromSource(
 				factoryDefaults.promptList,
-				factoryDefaults.jdbToolDescriptions,
+				factoryDefaults.edaApi,
 				factoryDefaults.mcpToolDescriptions,
 				factoryDefaults.customToolDescriptions,
 				factoryDefaults.mcpFunctions,
@@ -973,7 +1023,7 @@
 		/**
 		 * 解析本地源码/重建版 JS 文件(供"从本地文件导入"复用)。
 		 * 仅当用户选择了 *.export.v*.js 这类文件时才需要执行源码文本解析:
-		 * 通过沙箱执行提取 window.promptList / window.mcpEDA / window.customeTools 等赋值,
+		 * 通过沙箱执行提取 window.promptList / window.mcpProtocol / window.curatedTools 等赋值,
 		 * 未提供的部分回退出厂快照,构建业务行后合并写入并激活。
 		 * 注意:此方法与 importFromMemory 的区别在于——它解析"用户选中的文件",而非内存常量。
 		 */
@@ -982,23 +1032,26 @@
 			let jdb = null;
 			let mcpDesc = null;
 			let customDesc = null;
+			let resourceList = null;
 			const mcpFns = {};
 			const customFns = {};
 			for (const file of files) {
 				const code = await file.text();
 				const extracted = extractSourceAssignments(code);
 				if (extracted.promptList) prompts = extracted.promptList;
-				if (extracted.jdbToolDescriptions) jdb = extracted.jdbToolDescriptions;
+				if (extracted.edaApi) jdb = extracted.edaApi;
 				if (extracted.mcpToolDescriptions) mcpDesc = extracted.mcpToolDescriptions;
 				if (extracted.customToolDescriptions) customDesc = extracted.customToolDescriptions;
+				if (extracted.resourceList) resourceList = extracted.resourceList;
 				Object.assign(mcpFns, extracted.mcpFunctions || {});
 				Object.assign(customFns, extracted.customFunctions || {});
 			}
 			if (!prompts) prompts = factoryDefaults.promptList;
-			if (!jdb) jdb = factoryDefaults.jdbToolDescriptions;
+			if (!jdb) jdb = factoryDefaults.edaApi;
 			if (!mcpDesc) mcpDesc = factoryDefaults.mcpToolDescriptions;
 			if (!customDesc) customDesc = factoryDefaults.customToolDescriptions;
-			const rows = buildRowsFromSource(prompts, jdb, mcpDesc, customDesc, mcpFns, customFns);
+			if (!resourceList) resourceList = factoryDefaults.resourceList;
+			const rows = buildRowsFromSource(prompts, jdb, mcpDesc, customDesc, mcpFns, customFns, resourceList);
 			await applyImport(rows, FACTORY_VERSION);
 		},
 
@@ -1098,7 +1151,7 @@
 		},
 
 		/**
-		 * 导出「出厂默认 1.0」的数据重建版 JS 文件(共 3 个):
+		 * 导出「出厂默认 1.0」的数据重建版 JS 文件(共 4 个):
 		 * 用于离线备份或替换源文件时的数据重建,内容仅为 window.* 重新赋值。
 		 */
 		exportFactoryJs() {
@@ -1109,26 +1162,33 @@
 				+ `window.promptList = ${JSON.stringify(factoryDefaults.promptList, null, '\t')};\n`,
 				'text/javascript'
 			);
-			// 原生API描述重建版
-			downloadTextFile(
-				`eda-api.export.v${FACTORY_VERSION}.js`,
-				`// 出厂默认 ${FACTORY_VERSION} 原生API描述数据重建版(由 data-store 导出)\n`
-				+ `window.jdbToolDescriptions = ${JSON.stringify(factoryDefaults.jdbToolDescriptions, null, '\t')};\n`,
-				'text/javascript'
-			);
+		// 原生API描述重建版
+		downloadTextFile(
+			`eda-api.export.v${FACTORY_VERSION}.js`,
+			`// 出厂默认 ${FACTORY_VERSION} 原生API描述数据重建版(由 data-store 导出)\n`
+			+ `window.edaApi = ${JSON.stringify(factoryDefaults.edaApi, null, '\t')};\n`,
+			'text/javascript'
+		);
+		// 资源重建版(与 window.resourceList 挂载区默认集一致)
+		downloadTextFile(
+			`resource-list.export.v${FACTORY_VERSION}.js`,
+			`// 出厂默认 ${FACTORY_VERSION} 资源列表数据重建版(由 data-store 导出)\n`
+			+ `window.resourceList = ${JSON.stringify(factoryDefaults.resourceList, null, '\t')};\n`,
+			'text/javascript'
+		);
 			// 元工具/精选工具重建版(描述 + 函数源码)
 			const functionLines = [];
 			for (const [name, fn] of Object.entries(factoryDefaults.mcpFunctions)) {
-				functionLines.push(`window.mcpEDA[${JSON.stringify(name)}] = (${fn.toString()});`);
+				functionLines.push(`window.mcpProtocol[${JSON.stringify(name)}] = (${fn.toString()});`);
 			}
 			for (const [name, fn] of Object.entries(factoryDefaults.customFunctions)) {
-				functionLines.push(`window.customeTools[${JSON.stringify(name)}] = (${fn.toString()});`);
+				functionLines.push(`window.curatedTools[${JSON.stringify(name)}] = (${fn.toString()});`);
 			}
 			downloadTextFile(
-				`mcp-eda-tools.export.v${FACTORY_VERSION}.js`,
+				`mcp-tools.export.v${FACTORY_VERSION}.js`,
 				`// 出厂默认 ${FACTORY_VERSION} 元工具/精选工具数据重建版(由 data-store 导出)\n`
-				+ `window.mcpEDA.toolDescriptions = ${JSON.stringify(factoryDefaults.mcpToolDescriptions, null, '\t')};\n`
-				+ `window.customeTools.toolDescriptions = ${JSON.stringify(factoryDefaults.customToolDescriptions, null, '\t')};\n`
+				+ `window.mcpProtocol.metaToolSchemas = ${JSON.stringify(factoryDefaults.mcpToolDescriptions, null, '\t')};\n`
+				+ `window.curatedTools.curatedToolSchemas = ${JSON.stringify(factoryDefaults.customToolDescriptions, null, '\t')};\n`
 				+ functionLines.join('\n') + '\n',
 				'text/javascript'
 			);
@@ -1156,19 +1216,18 @@
 			const mcpFns = [];
 			const customFns = [];
 			for (const row of cache.tools) {
-				if (row.source === 'mcp') {
-					mcpDesc.push({ name: row.name, description: row.description, inputSchema: safeParse(row.input_schema) });
-					if (row.impl_code) mcpFns.push(`window.mcpEDA[${JSON.stringify(row.name)}] = (${row.impl_code});`);
-				} else if (row.source === 'custom') {
+				if (row.source === 'meta') {					mcpDesc.push({ name: row.name, description: row.description, inputSchema: safeParse(row.input_schema) });
+					if (row.impl_code) mcpFns.push(`window.mcpProtocol[${JSON.stringify(row.name)}] = (${row.impl_code});`);
+				} else if (row.source === 'curated') {
 					customDesc.push({ name: row.name, description: row.description, inputSchema: safeParse(row.input_schema) });
-					if (row.impl_code) customFns.push(`window.customeTools[${JSON.stringify(row.name)}] = (${row.impl_code});`);
+					if (row.impl_code) customFns.push(`window.curatedTools[${JSON.stringify(row.name)}] = (${row.impl_code});`);
 				}
 			}
 			downloadTextFile(
-				`mcp-eda-tools.export.v${ver}.js`,
+				`mcp-tools.export.v${ver}.js`,
 				'// 数据库 v' + ver + ' 元工具/精选工具数据重建版(由 data-store 导出)\n'
-				+ 'window.mcpEDA.toolDescriptions = ' + JSON.stringify(mcpDesc, null, '\t') + ';\n'
-				+ 'window.customeTools.toolDescriptions = ' + JSON.stringify(customDesc, null, '\t') + ';\n'
+				+ 'window.mcpProtocol.metaToolSchemas = ' + JSON.stringify(mcpDesc, null, '\t') + ';\n'
+				+ 'window.curatedTools.curatedToolSchemas = ' + JSON.stringify(customDesc, null, '\t') + ';\n'
 				+ mcpFns.concat(customFns).join('\n') + '\n',
 				'text/javascript'
 			);
@@ -1214,7 +1273,7 @@
 			return source ? rows.filter(row => row.source === source) : rows;
 		},
 
-		/** 获取资源行列表(未激活时出厂默认为空) */
+		/** 获取资源行列表(统一行结构;未激活时由出厂快照即时构建) */
 		listResourceRows() {
 			return activated ? cache.resources.slice() : buildFactoryResourceRows();
 		},
@@ -1238,11 +1297,24 @@
 			if (patch.description !== undefined) row.description = patch.description;
 			row.is_modified = true;
 			row.updated_at = nowISO();
-			await persistTable('prompts');
-			refreshRuntimeCache();
-		},
+		await persistTable('prompts');
+		refreshRuntimeCache();
+	},
 
-		/** 更新工具(patch: {description?, inputSchema?(JSON字符串), implCode?, enabled?}) */
+	/** 更新资源(patch: {description?, content?}) */
+	async updateResource(uri, patch) {
+		this.assertActivated();
+		const row = cache.resources.find(item => item.uri === uri);
+		if (!row) throw new Error(`资源不存在: ${uri}`);
+		if (patch.description !== undefined) row.description = patch.description;
+		if (patch.content !== undefined) row.content = patch.content;
+		row.is_modified = true;
+		row.updated_at = nowISO();
+		await persistTable('resources');
+		refreshRuntimeCache();
+	},
+
+	/** 更新工具(patch: {description?, inputSchema?(JSON字符串), implCode?, enabled?}) */
 		async updateTool(name, patch) {
 			this.assertActivated();
 			const row = cache.tools.find(item => item.name === name);
@@ -1281,7 +1353,7 @@
 				description: '新增自定义工具(请完善描述)',
 				input_schema: JSON.stringify({ type: 'object', properties: {}, required: [] }),
 				impl_code: `async function ${name}(args) {\n\t// TODO: 实现工具逻辑,args 为参数对象\n\treturn 'ok';\n}`,
-				source: 'custom',
+				source: 'curated',
 				enabled: true,
 				is_modified: true,
 				updated_at: nowISO()
@@ -1327,6 +1399,18 @@
 			refreshRuntimeCache();
 		},
 
+		/** 单条资源恢复出厂默认 */
+		async resetResource(uri) {
+			this.assertActivated();
+			const factoryRow = buildFactoryResourceRow(uri);
+			if (!factoryRow) throw new Error(`该资源无出厂默认版本: ${uri}`);
+			const index = cache.resources.findIndex(item => item.uri === uri);
+			if (index < 0) cache.resources.push(factoryRow);
+			else cache.resources[index] = factoryRow;
+			await persistTable('resources');
+			refreshRuntimeCache();
+		},
+
 		/** 全部恢复出厂默认(整库重建为出厂数据,用户修改全部丢弃) */
 		async resetAllDefaults() {
 			this.assertActivated();
@@ -1346,7 +1430,7 @@
 
 		// ---------- 引用检测 ----------
 		findReferences,
-		/** 发送前还原 @{name} → 裸 name，保证送入模型的文本与标记化前一致 */
+		/** 发送前还原 @name → 裸 name，保证送入模型的文本与标记化前一致 */
 		stripRefMarks,
 		/** 从主表实时派生关系图谱数据（nodes/links），供 graph-view.js 渲染 */
 		buildGraph,

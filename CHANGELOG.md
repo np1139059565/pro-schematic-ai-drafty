@@ -1,5 +1,11 @@
 # 更新日志
 
+## v1.0.7 `2026-08-24`
+- 提示词重构为「极简索引 `prompt_index` + 5 个领域包 `domain_*` + 5 个知识叶 `knowledge_*` + 3 个执行叶 `execution_*`」的渐进式按需下钻结构，首屏仅注入索引、按场景取子集，缓解长枚举导致的焦点稀释
+- 精选工具改为「实现 + `*_SCHEMA` 元数据」紧邻聚合（相似集聚），新增 `semantic_tags`/`source`/`domain` 字段，增删函数只需改一处
+- 统一工具入口：`callTool` 作为协议壳派发所有精选工具与 EDA 原生函数，`listTools({scenario})`/`listPrompts({domain})` 分层过滤注入量降至 ~8–12，`searchTools` 增强基于条目自描述 `semantic_tags` 的倒排检索（取代中心登记表）
+- MCP 模块重定位：原顶层 `eda-api.js`、`mcp-eda.js`、`mcp-prompt.js` 及 `vendor/*.min.js` 整合至 `iframe/mcp/` 目录（`meta-tools.js`/`curated-tools/`/`prompts.js`/`resources.js`/`eda-api.js`），协议壳与精选工具/提示词/资源职责分离
+
 ## v1.0.6 `2026-08-05`
 - 新增右侧六栏抽屉面板：图谱、提示词、精选工具、EDA函数、资源、日志，支持一键切换浏览
 - 新增知识图谱视图（D3 力导向图），可视化展示工具调用与元件关联，支持搜索居中与节点高亮

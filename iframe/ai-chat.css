@@ -1115,27 +1115,6 @@ body {
 	background: #e2e7fa;
 }
 
-/* 资源查看面板 */
-.dm-resource-view {
-	font-size: 13px;
-	color: #555;
-}
-
-/* 资源内容只读展示 */
-.dm-code-view {
-	margin-top: 4px;
-	padding: 10px;
-	background: #f8f9fa;
-	border: 1px solid #e0e0e0;
-	border-radius: 4px;
-	font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-	font-size: 12px;
-	white-space: pre-wrap;
-	word-break: break-all;
-	max-height: 300px;
-	overflow-y: auto;
-}
-
 /* ==================== JSON 树按括号层级折叠(日志详情) ==================== */
 
 /* JSON 树根容器 */
@@ -1146,11 +1125,30 @@ body {
 	color: #333;
 }
 
-/* 单个可折叠单元(对象 / 数组) */
+/* ==================== JSON 折叠树(日志请求/响应快照) ==================== */
+/* 外层容器:等宽字体 + 保留代码观感 */
+.dm-json-tree {
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 1.6;
+}
+
+/* 单个 JSON 节点(键名 label + 折叠单元 + 尾逗号)的块级行容器 */
+.dm-json-node {
+	display: block;
+}
+
+/* 子项行:每个对象属性 / 数组元素独占一行,块级确保换行不挤压 */
+.dm-json-line {
+	display: block;
+}
+
+/* 可折叠单元(对象 / 数组):块级,左侧虚线引导层级 */
 .dm-json-fold {
-	margin: 2px 0 2px 14px;
+	display: block;
+	margin: 1px 0;
 	border-left: 1px dashed #d7dbe6;
-	padding-left: 6px;
+	padding-left: 14px;
 }
 
 /* 折叠标题(仅含 '{' 或 '[' 字符,箭头符号由 ::before 提供),点击展开 / 收起 */
@@ -1178,16 +1176,38 @@ body {
 	content: '▼';
 }
 
+/* 折叠态 summary 末尾的收起提示(如 ... } / ... ]),展开时隐藏 */
+.dm-json-hint {
+	color: #aaa;
+	font-weight: 400;
+	margin-left: 4px;
+}
+
+.dm-json-fold[open] > summary .dm-json-hint {
+	display: none;
+}
+
 /* 折叠体容器:包裹 { } 或 [ ] 字面括号,与子项缩进对齐 */
 .dm-json-body {
 	white-space: pre-wrap;
 	word-break: break-all;
-	margin-top: 2px;
+}
+
+/* 折叠体子项统一左缩进,确保每一层对象/数组相对父级 { } [ ] 右移,
+   使嵌套结构与字符串值内的多行文本在视觉上层次分明、内外对齐 */
+.dm-json-body > .dm-json-line,
+.dm-json-body > .dm-json-node {
+	margin-left: 16px;
+}
+
+/* 行内尾逗号:紧贴上一元素 / 闭括号之后,绝不孤立成行 */
+.dm-json-comma {
+	color: #333;
 }
 
 /* JSON 各类型着色 */
 .dm-json-key { color: #b5651d; }   /* 键名 */
-.dm-json-str { color: #2a7d2a; }   /* 字符串值 */
+.dm-json-str { color: #2a7d2a; white-space: pre-wrap; word-break: break-all; }   /* 字符串值:内部换行由 CSS 自动折行,保留缩进观感 */
 .dm-json-num { color: #1f6feb; }   /* 数字 / 布尔 */
 .dm-json-null { color: #999; font-style: italic; } /* null */
 
@@ -1211,7 +1231,29 @@ body {
 	font-weight: 600;
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
+	gap: 10px;
+}
+
+/* 标题栏左侧轮次文本 */
+.dm-log-turn-text {
+	white-space: nowrap;
+}
+
+/* 标题栏单轮 token 消耗徽标:与复制按钮并列,信息一目了然 */
+.dm-log-turn-tokens {
+	font-weight: 600;
+	font-size: 11px;
+	color: #2e7d32;
+	background: #e8f5e9;
+	border: 1px solid #c8e6c9;
+	border-radius: 10px;
+	padding: 1px 8px;
+	white-space: nowrap;
+}
+
+/* 复制按钮推至最右 */
+.dm-log-copy-btn {
+	margin-left: auto;
 }
 
 /* 标题栏复制按钮(替代原双击复制,点击复制该轮完整 JSON) */

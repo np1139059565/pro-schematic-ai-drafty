@@ -12,7 +12,7 @@
  *    - 删除数据库:deleteDatabase 回退原始 JS 即等价于恢复默认;
  *    另在日志分栏工具栏提供「清空日志」(clearLogs,仅清日志两表);
  * 4. 提供辅助能力:引用关系提示(调用了哪些工具/被哪些工具与提示词引用)、
- *    「AI 根据函数更新描述」一键重生成工具描述与参数模式;
+ *    「AI 格式化并补全(代码+描述)」一键对函数做格式化/修复/补注释并重生成工具描述与参数模式;
  * 5. 提供交互增强:@引用 高亮(单击展开信息卡、双击跳转)、可拖拽分隔条调整列表宽度、
  *    提示词新增/删除(删除前经 findReferences 做引用保护)。
  *
@@ -98,8 +98,8 @@
         switch (tabId) {
             case 'prompts': return window.dataStore.listPromptRows();
             case 'jdb': return window.dataStore.listToolRows('jdb');
-            // 精选工具标签页同时展示 custom(精选封装)与 mcp(元工具)
-            case 'featured': return window.dataStore.listToolRows('custom').concat(window.dataStore.listToolRows('mcp'));
+            // 精选工具标签页同时展示 curated(精选封装)与 meta(元工具)
+            case 'featured': return window.dataStore.listToolRows('curated').concat(window.dataStore.listToolRows('meta'));
             case 'resources': return window.dataStore.listResourceRows();
             default: return [];
         }
@@ -164,14 +164,15 @@
 
     /** 渲染当前页列表(含修改标记●与禁用标记) */
     function renderList() {
-        if (currentTab === 'logs') { renderLogList(); return; } // 日志 Tab 走独立列表渲染
-        if (currentTab === 'graph') { renderGraph(); return; } // 图谱 Tab 走独立渲染
+        if (currentTab === 'graph') { renderGraph(); return; } // 图谱 Tab 走独立渲染(自身负责添加布局类)
         // 从图谱 Tab 切回普通 Tab：恢复左侧列表与分隔条布局
+        // (必须位于 logs 分支之前:日志 Tab 依赖左侧列表,否则 dm-body-graph 类残留会把列表隐藏成"记录为空")
         const body = document.querySelector('.dm-body');
         if (body) body.classList.remove('dm-body-graph');
         listEl.style.display = '';
         const splitter = document.getElementById('dmSplitter');
         if (splitter) splitter.style.display = '';
+        if (currentTab === 'logs') { renderLogList(); return; } // 日志 Tab 走独立列表渲染
         const rows = filterRows(getRowsForTab(currentTab));
         const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
         if (currentPage > totalPages) currentPage = totalPages;
@@ -274,46 +275,96 @@
     // ==================== @引用高亮 / 引用信息卡 / 跳转 ====================
 
     /**
-     * 将文本中的 @{name} 显式引用渲染为可点击高亮的 dm-ref 片段(其余内容转义)
-     * 渲染时隐去 @{...} 包裹，只显示 name 本身，保持人类阅读观感(详见《界面原型说明》§4.7「@引用 标记交互」)；
-     * 兼容历史遗留的裸 @name 写法。单击展开信息卡、双击跳转逻辑由全局委托统一处理。
+     * 将文本中的 @name 显式引用渲染为可点击高亮的 dm-ref 片段(其余内容转义)
+     * 渲染时只显示 name 本身，保持人类阅读观感(详见《界面原型说明》§4.7「@引用 标记交互」)；
+     * 单击展开信息卡、双击跳转逻辑由全局委托统一处理。
      */
     function renderRefs(text) {
         if (!text) return '';
+        // @name 显式引用：渲染为可点击高亮的 dm-ref 片段(其余内容转义)
+        // 关键约束(D3)：高亮前必须先用 getRefInfo 校验目标是否真实存在
+        // (即在 精选工具 / 元工具 / EDA函数 / 资源 / 提示词 任一集合中能命中);
+        // 若目标不存在(脏引用 / 拼写错误 / 尚未创建)，则保持原文本不高亮，
+        // 避免双击信息卡无法跳转造成误导。与 extractVisibleRefs 的 @name 分支口径一致。
         return escapeHtml(text)
-            .replace(/@\{([A-Za-z0-9_.\$]+)\}/g,
-                (_, name) => `<span class="dm-ref" data-ref="${name}">${name}</span>`)
             .replace(/@([A-Za-z0-9_.\$]+)/g,
-                (_, name) => `<span class="dm-ref" data-ref="${name}">${name}</span>`);
+                (_, name) => getRefInfo(name)
+                    ? `<span class="dm-ref" data-ref="${name}">${name}</span>`
+                    : `@${name}`);
     }
 
+	/**
+	 * 从函数实现/提示词正文等源码文本中提取引用并渲染为可点击高亮的 dm-ref 片段
+	 * （其余源码转义并保持等宽展示）。
+	 * 识别三类引用,均与 @引用 共享同一套「单击信息卡 / 双击跳转」机制(由全局委托统一处理):
+	 *   1. @name 显式标记引用(如 @sch_PrimitiveComponent$createBatch);
+ *   2. 全局对象调用引用:window.curatedTools.<name>(...) / window.mcpProtocol.<name>(...)
+ *      —— 这些「真实调用」与 @引用 拥有同等效力,信息卡按 <name> 命中精选工具/元工具;
+	 *   3. 原生 API 调用引用:eda.<完整路径>(如 eda.sch_PrimitiveComponent.create)
+	 *      —— 按完整路径命中 EDA函数(jdb)节点。
+	 * 与 renderRefs 区别：此处面向「代码正文」，对 @name 不隐去 @ 符号，完整保留引用标记以便定位。
+	 * @param {string} text 源码文本
+	 * @returns {string} HTML 片段（无引用返回空串）
+	 */
+	function extractVisibleRefs(text) {
+		if (!text) return '';
+		let html = escapeHtml(text);
+		// 1. 全局对象调用引用:window.curatedTools.xxx(...) / window.mcpProtocol.xxx(...)
+		//    仅取「第一级方法名」(如 curatedToolSchemas 而非 curatedToolSchemas.find),避免把链式调用后缀误并入引用名导致无法跳转;
+		//    方法名自身不含 '.',故字符集不含 '.',自然切断后续链式属性(.find 等)
+		//    高亮前必须用 getRefInfo 校验该引用是否真实存在(即在 custom/mcp 工具集合中能命中):
+		//    像 window.curatedTools.curatedToolSchemas 这类「对象属性」(并非工具)即便被匹配也不应渲染成可点链接,
+		//    否则双击信息卡无法跳转,造成误导;存在性校验不通过时保持原文本不高亮。
+		html = html.replace(/window\.(curatedTools|mcpProtocol)\.([A-Za-z0-9_$]+)/g,
+			(_m, obj, name) => getRefInfo(name)
+				? `window.${obj}.<span class="dm-ref" data-ref="${name}">${name}</span>`
+				: _m);
+		// 2. 原生 API 调用引用:eda.完整路径(如 eda.isch_PrimitiveArc.done)
+		//    按完整路径命中 EDA函数(jdb)节点(与 buildGraph 的 native_fallback 口径一致)
+		//    同样需校验存在性:提取路径须能在 edaApi 原生清单中命中,否则不高亮
+		html = html.replace(/\beda\.([A-Za-z0-9_.\$]+)/g,
+			(_m, name) => getRefInfo(name)
+				? `eda.<span class="dm-ref" data-ref="${name}">${name}</span>`
+				: _m);
+		// 3. @name 显式标记引用(保留 @ 符号,便于定位)
+		//    同样校验存在性:@ 引用的目标若不存在于任意集合中,则不应渲染为可跳转链接
+		html = html.replace(/(^|[^@])@([A-Za-z0-9_.\$]+)/g,
+			(_m, pre, name) => getRefInfo(name)
+				? `${pre}<span class="dm-ref" data-ref="${name}">@${name}</span>`
+				: _m);
+		return html ? `<pre class="dm-code-view">${html}</pre>` : '';
+	}
+
     /**
-     * 从函数实现/提示词正文等源码文本中提取显式 @{name} 与裸 @name 引用，
-     * 渲染为可点击高亮的 dm-ref 片段（其余源码转义并保持等宽展示）。
-     * 与 renderRefs 区别：此处面向「代码正文」，不隐去 @ 符号，完整保留引用标记以便定位。
-     * @param {string} text 源码文本
-     * @returns {string} HTML 片段（无引用返回空串）
+     * 把日志快照字段归一为对象,供渲染前统一解析为真实结构。
+     *
+     * @param {*} value 日志快照字段(可能是对象、JSON 字符串或 null)
+     * @returns {*} 解析后的对象;非字符串或解析失败则原样返回
      */
-    function extractVisibleRefs(text) {
-        if (!text) return '';
-        const html = escapeHtml(text)
-            .replace(/@\{([A-Za-z0-9_.\$]+)\}/g,
-                (_, name) => `<span class="dm-ref" data-ref="${name}">@${name}</span>`)
-            .replace(/(^|[^@])@([A-Za-z0-9_.\$]+)/g,
-                (m, pre, name) => `${pre}<span class="dm-ref" data-ref="${name}">@${name}</span>`);
-        return html ? `<pre class="dm-code-view">${html}</pre>` : '';
+    function toJsonObject(value) {
+        if (typeof value !== 'string') return value; // 非字符串(对象/数组/null)直接透传
+        if (value.trim() === '') return value; // 空字符串不构成合法 JSON,透传
+        try {
+            return JSON.parse(value); // 字符串则解析回真实结构
+        } catch (err) {
+            return value; // 解析失败保留原文本,交由 renderJsonFoldable 降级处理
+        }
     }
 
     /**
      * 将 JSON 字符串渲染为「按 { } [ ] 层级可折叠」的 HTML。
      *
-     * 设计要点(对应需求:移除日志内层整体折叠,改为 JSON 内容自身的括号层级折叠):
-     * - 先 JSON.parse 解析为真实结构,再递归生成带 <details> 的 HTML,因此字符串字面量内部的
-     *   '{' '[' '}' ']' 属于字符串值、不会被误拆为折叠单元(天然排除转义/嵌套括号干扰)。
-     * - 每个对象 / 数组作为一个可折叠单元:**默认展开(open)**,仅 '{'/'[' 前保留折叠 / 展开箭头图标,
-     *   不显示任何键名 / 数量等统计文字;展开后显示子项(子项若仍为对象/数组则递归可继续折叠)。
-     * - 字符串值内部仍经 renderRefs 处理,使 description 等字段中的 @引用保持高亮与跳转能力。
-     * - 解析失败(非法 JSON)时降级为纯文本 + renderRefs,避免整段日志无法展示。
+     * 排版约定(彻底重写,避免旧版逗号孤行 / 键名丢失 / 块级错位):
+     * 1. 先 JSON.parse 为真实结构,再递归生成 HTML;字符串字面量内部的括号属于值本身,不会误拆。
+     * 2. 每个对象 / 数组是一个**块级** <details> 可折叠单元,summary 仅显示 '{' 或 '[';
+     *    展开后 body 显示子项(子项若仍为对象/数组则递归可继续折叠)。
+     * 3. 子项统一用 .dm-json-line(块级)包裹,逗号作为**行内文本**追加在值 / 闭括号后,
+     *    因此逗号永远紧贴上一元素结尾(如 "}," 或 "],"),绝不出现在孤立行。
+     * 4. 父级键名(label)作为 .dm-json-line 的前导 span,与折叠单元同处一行,不会丢失。
+     * 5. 字符串值内部经 renderRefs 保留 @引用高亮;值内换行由 CSS white-space: pre-wrap 自动折行,
+     *    既保留缩进观感又不破坏 JSON 树层级(CSS 控制,不在 JS 内插入真实换行)。
+     * 6. 折叠态 summary 追加 "... }" / "... ]" 并带尾逗号,使收起时层级与分隔依然完整可辨。
+     * 7. 解析失败(非法 JSON)降级为纯文本 + renderRefs,避免整段日志无法展示。
      *
      * @param {string} jsonString JSON 文本
      * @returns {string} 可折叠 HTML
@@ -327,37 +378,50 @@
             return `<pre class="dm-code-view">${renderRefs(jsonString)}</pre>`;
         }
 
-        /** 递归生成单个 JSON 节点的 HTML */
-        function nodeHtml(val, keyLabel) {
-            const isObj = val !== null && typeof val === 'object' && !Array.isArray(val);
-            const isArr = Array.isArray(val);
+        /** 递归生成单个 JSON 节点的 HTML;isLast 控制当前节点后是否追加逗号 */
+        function nodeHtml(val, keyLabel, isLast) {
+            const comma = isLast ? '' : ','; // 逗号紧贴本节点末尾(非末项时)
             const label = keyLabel ? `<span class="dm-json-key">${escapeHtml(keyLabel)}:</span> ` : '';
-            if (isObj) {
-                // 对象:可折叠单元。折叠/展开图标由 CSS(.dm-json-fold>summary::before)放在 '{' 之前,
-                // 子项之间以逗号+空格分隔,忠实还原 JSON 键值对间的逗号语法。
-                const body = Object.keys(val).map(k => nodeHtml(val[k], k)).join(',\n ');
-                return `<details class="dm-json-fold" open><summary>{</summary><div class="dm-json-body">${body}</div>}</details>`;
+
+            // 对象:块级可折叠单元,summary 显示 '{',body 显示子项,末尾 '}' 自带行内逗号
+            if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+                const entries = Object.keys(val);
+                const body = entries
+                    .map((k, i) => `<div class="dm-json-line">${nodeHtml(val[k], k, i === entries.length - 1)}</div>`)
+                    .join('');
+                const summaryHint = entries.length === 0 ? '}' : '... }';
+                return `<div class="dm-json-node">${label}<details class="dm-json-fold" open>`
+                    + `<summary>{<span class="dm-json-hint">${summaryHint}</span></summary>`
+                    + `<div class="dm-json-body">${body}</div>}`
+                    + `<span class="dm-json-comma">${comma}</span></details></div>`;
             }
-            if (isArr) {
-                // 数组:可折叠单元。折叠/展开图标由 CSS 放在 '[' 之前,不显示任何统计文字;
-                // 闭合 ']' 后缀于 body 之后。数组元素之间以逗号+空格分隔。
-                const body = val.map((item, i) => nodeHtml(item, String(i))).join(',\n ');
-                return `<details class="dm-json-fold" open><summary>[</summary><div class="dm-json-body">${body}</div>]</details>`;
+
+            // 数组:块级可折叠单元,summary 显示 '[',body 显示元素,末尾 ']' 自带行内逗号
+            if (Array.isArray(val)) {
+                const body = val
+                    .map((item, i) => `<div class="dm-json-line">${nodeHtml(item, null, i === val.length - 1)}</div>`)
+                    .join('');
+                const summaryHint = val.length === 0 ? ']' : '... ]';
+                return `<div class="dm-json-node">${label}<details class="dm-json-fold" open>`
+                    + `<summary>[<span class="dm-json-hint">${summaryHint}</span></summary>`
+                    + `<div class="dm-json-body">${body}</div>]`
+                    + `<span class="dm-json-comma">${comma}</span></details></div>`;
             }
+
+            // 基本类型:键名(若有) + 值 + 行内逗号,整段处于同一 .dm-json-line 内
             if (typeof val === 'string') {
-                // 字符串:经 renderRefs 保留 @引用高亮;转义由 renderRefs 内部完成
-                return `${label}<span class="dm-json-str">"${renderRefs(val)}"</span>`;
+                return `${label}<span class="dm-json-str">"${renderRefs(val)}"</span><span class="dm-json-comma">${comma}</span>`;
             }
             if (typeof val === 'number' || typeof val === 'boolean') {
-                return `${label}<span class="dm-json-num">${String(val)}</span>`;
+                return `${label}<span class="dm-json-num">${String(val)}</span><span class="dm-json-comma">${comma}</span>`;
             }
             if (val === null) {
-                return `${label}<span class="dm-json-null">null</span>`;
+                return `${label}<span class="dm-json-null">null</span><span class="dm-json-comma">${comma}</span>`;
             }
-            return `${label}${escapeHtml(String(val))}`;
+            return `${label}<span class="dm-json-str">${escapeHtml(String(val))}</span><span class="dm-json-comma">${comma}</span>`;
         }
 
-        return `<div class="dm-json-tree">${nodeHtml(value)}</div>`;
+        return `<div class="dm-json-tree">${nodeHtml(value, null, true)}</div>`;
     }
 
     /** 引用信息卡浮动元素(惰性创建) */
@@ -373,10 +437,10 @@
 
     /** 从当前运行数据查找引用目标的摘要信息(类型/描述/启用态) */
     function getRefInfo(name) {
-        const custom = (window.customeTools.toolDescriptions || []).find(t => t.name === name);
-        const meta = (window.mcpEDA.toolDescriptions || []).find(t => t.name === name);
-        const jdb = (window.jdbToolDescriptions || []).find(t => t.name === name);
-        const res = (window.jdbResourceList || []).find(r => r.uri === name || r.name === name);
+        const custom = (window.curatedTools.curatedToolSchemas || []).find(t => t.name === name);
+        const meta = (window.mcpProtocol.metaToolSchemas || []).find(t => t.name === name);
+        const jdb = (window.edaApi || []).find(t => t.name === name);
+        const res = (window.resourceList || []).find(r => r.uri === name || r.name === name);
         const prompt = (window.promptList || []).find(p => p.name === name);
         if (custom) return { type: '精选工具', name, description: custom.description, enabled: custom.enabled };
         if (meta) return { type: '元工具', name, description: meta.description, enabled: meta.enabled };
@@ -464,7 +528,7 @@
         if (sessions.length === 0) {
             const empty = document.createElement('li');
             empty.className = 'dm-item';
-            empty.innerHTML = '<span class="dm-item-desc">暂无会话日志(需先「导入 → 从源码导入」激活数据库并发送消息)</span>';
+            empty.innerHTML = '<span class="dm-item-desc">暂无会话日志</span>';
             listEl.appendChild(empty);
             pageInfoEl.textContent = '共 0 个会话';
         } else {
@@ -490,7 +554,39 @@
         editPane.innerHTML = '';
         const header = document.createElement('div');
         header.className = 'dm-edit-header';
-        header.innerHTML = `<span class="dm-edit-name">会话日志</span><span class="dm-edit-meta">${logs.length} 轮</span>`;
+        // 统计本会话 token 消耗总量:逐轮累加响应快照 usage.total_tokens(响应缺失/无 usage 时按 0 计)
+        let totalTokens = 0;
+        for (const log of logs) {
+            const resp = toJsonObject(log.response_payload);
+            totalTokens += (resp && resp.usage && resp.usage.total_tokens) || 0;
+        }
+        header.innerHTML =
+            `<span class="dm-edit-name">会话日志</span>`
+            + `<span class="dm-edit-meta">${logs.length} 轮</span>`
+            + `<span class="dm-edit-meta">累计 ${totalTokens} tokens</span>`;
+        // 复制全部按钮:一键复制该会话所有轮次的请求/响应 JSON(与单轮复制按钮并列于标题栏)
+        const copyAllBtn = document.createElement('button');
+        copyAllBtn.className = 'dm-log-copy-btn';
+        copyAllBtn.textContent = '复制全部';
+        copyAllBtn.title = '复制该会话全部轮次请求/响应 JSON';
+        copyAllBtn.addEventListener('click', () => {
+            // 复制前统一用 toJsonObject 归一字符串态快照,避免二次 JSON.stringify 双重编码
+            const text = JSON.stringify(logs.map(log => ({
+                turn: log.turn,
+                created_at: log.created_at,
+                request: toJsonObject(log.request_payload),
+                response: toJsonObject(log.response_payload)
+            })), null, 2);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(
+                    () => notifyOk('已复制全部轮次日志 JSON 到剪贴板'),
+                    () => notifyError('复制失败,请手动选择复制')
+                );
+            } else {
+                notifyError('当前环境不支持剪贴板复制');
+            }
+        });
+        header.appendChild(copyAllBtn);
         editPane.appendChild(header);
 
         for (const log of logs) {
@@ -501,10 +597,24 @@
             const turn = document.createElement('summary');
             turn.className = 'dm-log-turn';
 
-            // 标题文本(仅轮次与时间,不含任何统计信息)
+            // 提取该轮 token 消耗:从响应快照 usage 中读取(ARK Responses API 结构为
+            // {input_tokens, output_tokens, total_tokens};旧日志可能缺字段,统一按 0 保底)
+            const resp4turn = toJsonObject(log.response_payload) || {};
+            const usage = resp4turn.usage || {};
+            const inTok = usage.input_tokens || usage.prompt_tokens || 0;
+            const outTok = usage.output_tokens || usage.completion_tokens || 0;
+            const totalTok = usage.total_tokens || (inTok + outTok);
+            // 标题栏文本:轮次 + 时间 + 该轮 token 消耗(一目了然)
             const turnText = document.createElement('span');
+            turnText.className = 'dm-log-turn-text';
             turnText.textContent = `第 ${log.turn} 轮 · ${log.created_at || ''}`;
             turn.appendChild(turnText);
+            // 单轮 token 消耗徽标(置于标题栏,与复制按钮并列)
+            const turnTokens = document.createElement('span');
+            turnTokens.className = 'dm-log-turn-tokens';
+            turnTokens.textContent = `↓${inTok} ↓${outTok} ∑${totalTok}`;
+            turnTokens.title = `本轮回填:输入 ${inTok} tokens · 输出 ${outTok} tokens · 合计 ${totalTok} tokens`;
+            turn.appendChild(turnTokens);
 
             // 复制按钮(置于标题栏,点击复制该轮完整 JSON;双击复制功能已移除)
             const copyBtn = document.createElement('button');
@@ -513,7 +623,9 @@
             copyBtn.title = '复制该轮请求/响应 JSON';
             copyBtn.addEventListener('click', (e) => {
                 e.stopPropagation(); // 阻止触发 summary 的折叠切换
-                const text = JSON.stringify({ request: log.request_payload, response: log.response_payload }, null, 2);
+                // 复制前用 toJsonObject 归一:即便日志字段因历史写入仍是字符串态,也先解析回真实结构,
+                // 避免对已序列化的 JSON 字符串二次 JSON.stringify 造成双重编码(转义嵌套)。
+                const text = JSON.stringify({ request: toJsonObject(log.request_payload), response: toJsonObject(log.response_payload) }, null, 2);
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     navigator.clipboard.writeText(text).then(
                         () => notifyOk('已复制该轮请求/响应 JSON 到剪贴板'),
@@ -533,7 +645,7 @@
             block.appendChild(reqLabel);
             const reqPre = document.createElement('div');
             reqPre.className = 'dm-code-view';
-            reqPre.innerHTML = renderJsonFoldable(JSON.stringify(log.request_payload, null, 2));
+            reqPre.innerHTML = renderJsonFoldable(JSON.stringify(toJsonObject(log.request_payload), null, 2));
             block.appendChild(reqPre);
 
             // 响应快照:仅保留标签,JSON 内容改为按 { } [ ] 层级可折叠(移除原内层整体折叠,见需求4)
@@ -543,7 +655,7 @@
             block.appendChild(respLabel);
             const respPre = document.createElement('div');
             respPre.className = 'dm-code-view';
-            respPre.innerHTML = renderJsonFoldable(JSON.stringify(log.response_payload, null, 2));
+            respPre.innerHTML = renderJsonFoldable(JSON.stringify(toJsonObject(log.response_payload), null, 2));
             block.appendChild(respPre);
 
             editPane.appendChild(block);
@@ -562,9 +674,9 @@
         // 委托 data-store.findReferences 统一扫描(工具互调 + 提示词引用)
         const refs = window.dataStore.findReferences(row.name);
         const outgoing = refs.calls.map(c => c.target); // 该工具调用了谁
-        // 被引用方以 @{name} 形式呈现,便于后续引用高亮与跳转
-        const incoming = refs.calledBy.map(c => `工具: @{${c.target}}`)
-            .concat(refs.referencedByPrompts.map(p => `提示词: @{${p}}`));
+        // 被引用方以 @name 形式呈现,便于后续引用高亮与跳转
+        const incoming = refs.calledBy.map(c => `工具: @${c.target}`)
+            .concat(refs.referencedByPrompts.map(p => `提示词: @${p}`));
         return { outgoing, incoming };
     }
 
@@ -689,7 +801,7 @@
             // ===== 显示态:只读高亮预览(含 @引用高亮),底部「编辑」按钮(未激活禁用) =====
             const descView = document.createElement('div');
             descView.className = 'dm-refs';
-            // 描述文本经 renderRefs 处理,使其内部的 @引用(如 @{sch_PrimitiveComponent$createBatch})高亮并支持单击/双击跳转
+            // 描述文本经 renderRefs 处理,使其内部的 @引用(如 @sch_PrimitiveComponent$createBatch)高亮并支持单击/双击跳转
             descView.innerHTML = `<div class="dm-refs-line"><b>描述:</b> ${renderRefs(row.description || '(无)')}</div>`;
             editPane.appendChild(descView);
 
@@ -825,27 +937,28 @@
                 editMode = false;
                 renderEdit(row);
             }));
-            // 「AI 根据函数更新描述」仅对携带函数体的工具开放(编辑态专属)
+            // 「AI 格式化并补全(代码+描述)」仅对携带函数体的工具开放(编辑态专属)
             if (implArea) {
-                actions.appendChild(buildButton('AI 根据函数更新描述', 'dm-btn', async (event) => {
+                actions.appendChild(buildButton('AI 格式化并补全(代码+描述)', 'dm-btn', async (event) => {
                     const button = event.currentTarget;
                     button.disabled = true;
-                    button.textContent = 'AI 生成中...';
+                    button.textContent = 'AI 处理中...';
                     try {
                         const result = await generateDescriptionByAI(row.name, implArea.value);
+                        if (result.implCode) implArea.value = result.implCode;
                         if (result.description) descArea.value = result.description;
                         if (result.inputSchema) schemaArea.value = JSON.stringify(result.inputSchema, null, '\t');
-                        notifyOk('AI 已生成描述与参数模式,请人工确认后点击「保存」');
+                        notifyOk('AI 已格式化、修复并补充注释与描述,请人工确认后点击「保存」');
                     } catch (error) {
                         notifyError(error);
                     } finally {
                         button.disabled = false;
-                        button.textContent = 'AI 根据函数更新描述';
+                        button.textContent = 'AI 格式化并补全(代码+描述)';
                     }
                 }));
             }
             // 「删除」仅对无出厂对应的用户新增工具开放(出厂工具用「禁用」)
-            if (row.source === 'custom' && row.is_modified) {
+            if (row.source === 'curated' && row.is_modified) {
                 actions.appendChild(buildButton('删除', 'dm-btn dm-btn-danger', async () => {
                     if (!confirm(`确认删除工具「${row.name}」吗?出厂工具会被拒绝删除。`)) return;
                     try {
@@ -863,7 +976,7 @@
             // ===== 显示态:只读高亮预览(含 @引用高亮),底部「编辑」按钮(未激活禁用) =====
             const descBox = document.createElement('div');
             descBox.className = 'dm-refs';
-            // 描述文本经 renderRefs 处理,使其内部的 @引用(如 @{sch_PrimitiveComponent$createBatch})高亮并支持单击/双击跳转
+            // 描述文本经 renderRefs 处理,使其内部的 @引用(如 @sch_PrimitiveComponent$createBatch)高亮并支持单击/双击跳转
             descBox.innerHTML = `<div class="dm-refs-line"><b>描述:</b> ${renderRefs(row.description || '(无)')}</div>`
                 + `<div class="dm-refs-line"><b>参数模式(inputSchema JSON):</b></div>`
                 + `<div class="dm-refs-line"><pre class="dm-code-view">${escapeHtml(schemaText)}</pre></div>`;
@@ -915,7 +1028,7 @@
                     notifyError(error);
                 }
             }, !activated));
-            if (row.source === 'custom' && row.is_modified) {
+            if (row.source === 'curated' && row.is_modified) {
                 actions.appendChild(buildButton('删除', 'dm-btn dm-btn-danger', async () => {
                     if (!confirm(`确认删除工具「${row.name}」吗?出厂工具会被拒绝删除。`)) return;
                     try {
@@ -932,16 +1045,80 @@
         }
     }
 
-    /** 渲染资源查看面板(资源当前仅支持查看,由数据文件导入维护) */
+    /** 渲染资源编辑面板(显示态 / 编辑态二选一,由 editMode 控制,二者不并存,与提示词编辑面板完全同构) */
     function renderResourceView(row) {
-        renderEditHeader(row.name || row.uri, [`URI: ${row.uri}`, `类型: ${row.mime_type || '未知'}`]);
-        const descBox = document.createElement('div');
-        descBox.className = 'dm-resource-view';
-        descBox.innerHTML =
-            `<div class="dm-refs-line"><b>描述:</b> ${renderRefs(row.description || '(无)')}</div>`
-            + `<div class="dm-refs-line"><b>内容:</b></div>`
-            + `<pre class="dm-code-view">${escapeHtml(row.content || '(空)')}</pre>`;
-        editPane.appendChild(descBox);
+        const activated = window.dataStore.isActivated();
+        if (!activated) editMode = false; // 未激活强制显示态(只读预览)
+        renderEditHeader(row.name || row.uri, [`URI: ${row.uri}`, `类型: ${row.mime_type || '未知'}`, row.is_modified ? '已修改' : '出厂默认']);
+
+        if (editMode) {
+            // ===== 编辑态:可编辑表单 + 保存/取消,不展示 @引用预览(避免编辑与显示并存) =====
+            const descInput = document.createElement('input');
+            descInput.className = 'dm-input';
+            descInput.value = row.description || '';
+            editPane.appendChild(buildField('描述(description)', descInput));
+
+            const contentArea = document.createElement('textarea');
+            contentArea.className = 'dm-textarea dm-textarea-lg';
+            contentArea.value = row.content || '';
+            editPane.appendChild(buildField('内容(content)', contentArea));
+
+            const actions = document.createElement('div');
+            actions.className = 'dm-actions';
+            // 保存:回写 description 与 content
+            actions.appendChild(buildButton('保存', 'dm-btn dm-btn-primary', async () => {
+                try {
+                    await window.dataStore.updateResource(row.uri, {
+                        description: descInput.value,
+                        content: contentArea.value
+                    });
+                    notifyOk(`资源「${row.uri}」已保存并即时生效`);
+                    editMode = false; // 保存后回到显示态查看结果
+                    refreshAfterMutation(row.uri);
+                } catch (error) {
+                    notifyError(error);
+                }
+            }));
+            // 取消:放弃未保存修改,回到显示态
+            actions.appendChild(buildButton('取消', 'dm-btn', () => {
+                editMode = false;
+                renderEdit(row);
+            }));
+            editPane.appendChild(actions);
+        } else {
+            // ===== 显示态:只读高亮预览(含 @引用高亮),底部「编辑」按钮(未激活禁用) =====
+            const descView = document.createElement('div');
+            descView.className = 'dm-refs';
+            // 描述文本经 renderRefs 处理,使其内部的 @引用(如 @resource_jlc_sch_primitive)高亮并支持单击/双击跳转
+            descView.innerHTML = `<div class="dm-refs-line"><b>描述:</b> ${renderRefs(row.description || '(无)')}</div>`;
+            editPane.appendChild(descView);
+
+            const contentBox = document.createElement('div');
+            contentBox.className = 'dm-refs';
+            contentBox.innerHTML = `<div class="dm-refs-line"><b>内容:</b></div>`
+                + `<div class="dm-refs-line">${extractVisibleRefs(row.content || '(空)')}</div>`;
+            editPane.appendChild(contentBox);
+
+            const actions = document.createElement('div');
+            actions.className = 'dm-actions';
+            // 编辑:进入编辑态重渲染(未激活时禁用)
+            actions.appendChild(buildButton('编辑', 'dm-btn dm-btn-primary', () => {
+                editMode = true;
+                renderEdit(row);
+            }, !activated));
+            // 恢复此条默认:显示态专属(编辑态不提供,避免误操作)
+            actions.appendChild(buildButton('恢复此条默认', 'dm-btn', async () => {
+                if (!confirm(`确认将资源「${row.uri}」恢复为出厂默认吗?当前修改将丢失。`)) return;
+                try {
+                    await window.dataStore.resetResource(row.uri);
+                    notifyOk(`资源「${row.uri}」已恢复出厂默认`);
+                    refreshAfterMutation(row.uri);
+                } catch (error) {
+                    notifyError(error);
+                }
+            }, !activated));
+            editPane.appendChild(actions);
+        }
     }
 
     /** 变更保存后的界面刷新(保持当前选中条目并重新渲染其最新数据) */
@@ -960,8 +1137,12 @@
     // ==================== AI 生成描述(复用聊天配置的 ARK / 私服通道) ====================
 
     /**
-     * 调用 AI 根据函数实现生成工具描述与参数模式。
-     * 要求 AI 仅返回 JSON:{ "description": string, "inputSchema": object }
+     * 调用 AI 对用户编写的工具函数做「格式化 + 修复 + 补注释 + 生成描述」:
+     * - 格式化:统一缩进与代码风格,保持函数语义不变;
+     * - 修复不足:修正明显的语法错误、边界条件缺陷与健壮性问题,不改变函数对外行为;
+     * - 补注释:在函数体内补充详尽的中文注释,说明函数逻辑与关键参数;
+     * - 生成描述:输出中文工具描述与 JSON Schema 参数模式,供回填编辑表单。
+     * 要求 AI 仅返回 JSON:{ "implCode": string, "description": string, "inputSchema": object }
      */
     async function generateDescriptionByAI(toolName, implCode) {
         if (!implCode || !implCode.trim()) throw new Error('函数实现为空,无法生成描述');
@@ -969,10 +1150,14 @@
         const messages = [
             {
                 role: 'system',
-                content: '你是一名工具元数据生成助手。用户提供一个 JavaScript 工具函数的源码,'
-                    + '请分析其功能与参数,生成简洁准确的中文描述和 JSON Schema 参数模式。'
+                content: '你是一名资深前端代码审查与工具元数据生成助手。用户提供一个 JavaScript 工具函数的源码,'
+                    + '请依次完成以下任务,保持函数语义与对外行为完全不变:'
+                    + '1. 格式化函数代码:统一缩进与代码风格;'
+                    + '2. 修复不足:修正明显的语法错误、边界条件缺陷与健壮性问题(如缺失空值保护),不改变返回结构与对外行为;'
+                    + '3. 在函数体内补充详尽的中文注释,说明函数逻辑与关键参数;'
+                    + '4. 生成简洁准确的中文描述(含参数与返回值说明)与 JSON Schema 参数模式。'
                     + '只返回一个 JSON 对象(不要 markdown 代码块),格式为:'
-                    + '{"description":"工具功能描述(含参数与返回值说明)","inputSchema":{"type":"object","properties":{},"required":[]}}'
+                    + '{"implCode":"格式化修复并补充注释后的完整函数源码","description":"工具功能描述(含参数与返回值说明)","inputSchema":{"type":"object","properties":{},"required":[]}}'
             },
             {
                 role: 'user',
@@ -980,10 +1165,11 @@
             }
         ];
         const response = await window.ArkAPI[usePrivateServer ? 'callPrivateChat' : 'callArkChat'](messages, null, []);
-        // 解析 Responses API 输出中的助手文本
+        // ArkAPI 统一返回 {data, request}(data 为 ARK 真实响应、request 为真实请求体),解析 data.output 中的助手文本
+        const data = (response && response.data) ? response.data : response;
         let text = '';
-        if (response && Array.isArray(response.output)) {
-            for (const item of response.output) {
+        if (data && Array.isArray(data.output)) {
+            for (const item of data.output) {
                 if (item.type === 'message' && item.role === 'assistant' && Array.isArray(item.content)) {
                     text += item.content.filter(c => c.type === 'output_text').map(c => c.text).join('');
                 }
@@ -994,7 +1180,7 @@
         const jsonText = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
         const parsed = JSON.parse(jsonText);
         if (!parsed || typeof parsed.description !== 'string') {
-            throw new Error('AI 返回内容不符合 {description, inputSchema} 格式');
+            throw new Error('AI 返回内容不符合 {implCode, description, inputSchema} 格式');
         }
         return parsed;
     }
@@ -1050,7 +1236,7 @@
 			'<div style="font-size:15px;font-weight:600;margin-bottom:6px;">选择导入来源</div>'
 			+ '<div style="font-size:12px;color:#666;margin-bottom:16px;">请明确选择一种导入方式,关闭本框不会执行任何导入。</div>'
 			+ '<button data-act="source" style="display:block;width:100%;margin-bottom:10px;padding:10px 12px;text-align:left;border:1px solid #d0d7de;border-radius:6px;background:#f6f8fa;cursor:pointer;font-size:13px;">'
-			+ '<b>从源码导入</b><br><span style="color:#57606a;">读取运行时内存中的出厂默认数据快照(由 mcp-prompt.js / eda-api.js / mcp-eda.js 等源码加载时写入)并写入数据库(首次使用)</span></button>'
+			+ '<b>从源码导入</b><br><span style="color:#57606a;">读取运行时内存中的出厂默认数据快照(由 mcp/prompts.js / eda-api.js / mcp/curated-tools/index.js / mcp/meta-tools.js 等源码加载时写入)并写入数据库(首次使用)</span></button>'
 			+ '<button data-act="local" style="display:block;width:100%;margin-bottom:10px;padding:10px 12px;text-align:left;border:1px solid #d0d7de;border-radius:6px;background:#f6f8fa;cursor:pointer;font-size:13px;">'
 			+ '<b>从本地文件导入</b><br><span style="color:#57606a;">选择 psa-export.v*.json 文件</span></button>'
 			+ '<button data-act="cancel" style="display:block;width:100%;padding:8px;border:none;background:transparent;color:#888;cursor:pointer;font-size:12px;">取消</button>';
@@ -1096,7 +1282,7 @@
 		}
 	});
 
-	// 删除数据库(回退到原始 JS 数据即恢复默认,移除冗余的"恢复全部默认"按钮)
+	// 删除数据库(回退到原始 JS 数据即恢复默认)
 	document.getElementById('dmDeleteBtn').addEventListener('click', async () => {
 		if (!confirm('确认删除本地数据库吗?删除后回退到原始 JS 数据(只读)即恢复默认状态,您的所有修改将丢失(建议先导出备份)。')) return;
 		try {
@@ -1140,7 +1326,7 @@
             if (!confirm('确认清空全部会话与调用日志吗?此操作仅删除日志,不影响业务数据。')) return;
             try {
                 await window.dataStore.clearLogs();
-                notifyOk('日志已清空');
+                // notifyOk('日志已清空');
                 renderAll();
             } catch (error) {
                 notifyError(error);

@@ -25,10 +25,11 @@
         prompt: '#4e79f7', // 提示词：蓝
         custom: '#2ecc71', // 精选工具：绿
         mcp:    '#f39c12', // MCP 元工具：橙
-        jdb:    '#95a5a6'  // EDA 原生 API：灰
+        jdb:    '#95a5a6', // EDA 原生 API：灰
+        resource: '#9b59b6' // 资源（EDA 开发资料）：紫
     };
 
-    /** 连线类型 → 颜色映射 */
+    /** 连线类型 → 颜色映射（逐类型箭头 marker 仍复用此表，保持单一来源） */
     const LINK_COLORS = {
         prompt_ref:     '#4e79f7',
         prompt_tool:    '#16a085',
@@ -38,10 +39,10 @@
         example_call:   '#bdc3c7'
     };
 
-    /** 连线强弱 → 宽度与力导向距离 */
-    const STRENGTH_WIDTH = { strong: 2, weak: 1 };
+    /** 连线强弱 → 宽度（强引用更粗，弱引用更细） */
+    const STRENGTH_WIDTH = { strong: 3, weak: 1.5 };
 
-    /** 完全离线：EDA 原生 API 默认折叠，仅展示 prompt/custom/mcp */
+    /** 完全离线：EDA 原生 API 与资源资料默认折叠（资源资料海量，默认不渲染以免淹没图谱；图例点开可见，被提示词 @uri 引用时随连线出现） */
     const DEFAULT_VISIBLE_TYPES = new Set(['prompt', 'custom', 'mcp']);
 
     // ==================== 内部状态 ====================
@@ -134,7 +135,7 @@
 
     /** 根据类型取中文标签 */
     function typeLabel(type) {
-        return { prompt: '提示词', custom: '精选工具', mcp: 'MCP元工具', jdb: 'EDA原生API' }[type] || type;
+        return { prompt: '提示词', custom: '精选工具', mcp: 'MCP元工具', jdb: 'EDA原生API', resource: '资源' }[type] || type;
     }
 
     /** 根据分类（提示词 category）取中文标签 */
@@ -233,11 +234,14 @@
         hideTooltip(); // 重绘（含切回非图谱 tab 时 renderGraphInternal 调用此处）时强制隐藏悬浮框，避免节点移出视口/被移除后 mouseout 不触发导致残留
         computeDegrees(); // 先计算入/出度，供节点半径与 tooltip 度数展示
         if (!graphData.nodes.length) {
-            gNodes.html('<text class="dm-graph-empty">暂无可见节点（可在图例中展开 EDA 原生 API）</text>');
+            gNodes.html('<text class="dm-graph-empty">暂无数据</text>');
             gLinks.selectAll('*').remove();
             gLabels.selectAll('*').remove();
             return;
         }
+        // 有数据时：务必清理上一次（空态时写入的）「暂无数据」占位文本，
+        // 否则该 <text> 会残留在节点层，造成「图谱已有数据却仍显示暂无数据」的视觉残留（D2 修复）。
+        gNodes.selectAll('text.dm-graph-empty').remove();
 
         // 连线（自环 source===target 无信息价值且会渲染出节点旁三角箭头，数据层已过滤，此处双保险）
         const links = graphData.links.filter(l => l.source !== l.target);
@@ -246,8 +250,7 @@
             .join('path')
             .attr('class', 'dm-graph-link')
             .attr('stroke', d => LINK_COLORS[d.refType] || '#999')
-            .attr('stroke-width', d => STRENGTH_WIDTH[d.strength] || 1)
-            .attr('stroke-dasharray', d => d.strength === 'weak' ? '4 3' : null)
+            .attr('stroke-width', d => STRENGTH_WIDTH[d.strength] || 1.5)
             .attr('fill', 'none')
             .attr('marker-end', d => `url(#dm-arrow-${d.refType})`)
             .on('mouseover', (event, d) => showLinkTooltip(event, d))
@@ -311,14 +314,84 @@
         applySearchHighlight();
     }
 
-    /** 选中节点并高亮（跨重绘持久） */
-    function selectNode(d) {
-        selectedNodeId = d.id;
-        if (nodeSel) nodeSel.classed('dm-graph-node-selected', n => n.id === selectedNodeId);
+    /**
+     * 取得一条连线的源/目标 id（字符串）。
+     * 关键：D3 forceLink 在 draw() 中已把 links[].source / target
+     * 从字符串 id 原地解析为节点对象引用（见 forceLink(links).id(...)），
+     * 因此此处必须兼容「字符串」与「节点对象」两种形态，
+     * 统一用 .id 取回原始字符串，否则与 selectedNodeId / searchKeyword 等字符串比较会恒为 false，
+     * 导致「选中关联高亮」「搜索链路高亮」完全失效（边淡出、邻居不亮）。
+     */
+    function linkEndId(end) {
+        return (end && typeof end === 'object') ? end.id : end;
+    }
+
+    /**
+     * 选中节点并高亮（跨重绘持久）；再次点击同一节点则取消选中。
+     * @param {object} d 目标节点
+     * @param {boolean} [force=false] 强制选中（非 toggle）。搜索场景由输入事件重复驱动，
+     *        若仍走 toggle 会在 repeatedly 命中同一节点时在「选中/取消」间抖动，故传 true 固定选中。
+     */
+    function selectNode(d, force) {
+        // 切换逻辑：若本次点击的正是已选中节点，则视为「取消选中」，
+        // 清除选中态与所有关联高亮，让用户能随时还原清爽视图。
+        // force 为真时（搜索命中）不执行 toggle，始终选中该节点。
+        if (!force && selectedNodeId === d.id) {
+            selectedNodeId = null;
+        } else {
+            selectedNodeId = d.id;
+        }
+        const sel = selectedNodeId;
+        if (nodeSel) nodeSel.classed('dm-graph-node-selected', n => n.id === sel);
         if (nodeSel) nodeSel.select('circle')
-            .attr('stroke', n => n.id === selectedNodeId ? '#ff1493' : '#fff')
-            .attr('stroke-width', n => n.id === selectedNodeId ? 4 : 1.5);
+            .attr('stroke', n => n.id === sel ? '#ff1493' : '#fff')
+            .attr('stroke-width', n => n.id === sel ? 4 : 1.5);
+        // 选中后点亮与之直接相连的边与邻居节点（与搜索高亮复用 dim/hl 机制）
+        // 注意：此处只做「选中态关联高亮」，绝不回调 applySearchHighlight，
+        // 否则会与搜索框 input 事件中的 applySearchHighlight→selectNode 形成无限递归。
+        // 搜索态的高亮由搜索 input 事件独立驱动 applySearchHighlight 完成。
+        // 取消选中（sel 为 null）时 applySelectionHighlight 内部会清除全部高亮。
+        applySelectionHighlight();
         hideCtxMenu();
+    }
+
+    /**
+     * 选中态关联高亮：仅点亮与选中节点直接相连的边与邻居,其余淡出。
+     * 与 applySearchHighlight 共用 dim/hl 样式类,保证视觉一致。
+     * @param {Set<string>|null} [extraHlIds] 额外需要高亮(不淡出)的节点集合,例如搜索多命中时传入全部命中 id。
+     *        这些节点仅被标记为「不淡出 + 高亮」,不会像选中节点那样展开邻居链路(避免全部点亮过亮)。
+     */
+    function applySelectionHighlight(extraHlIds) {
+        if (!nodeSel || !linkSel) return;
+        if (!selectedNodeId && !extraHlIds) {
+            nodeSel.classed('dim', false).classed('hl', false);
+            labelSel.classed('dim', false);
+            linkSel.classed('dim', false).classed('hl', false);
+            return;
+        }
+        // 直接关联的边集合 → 两端节点即为邻居集合（含选中节点自身）
+        // 注意：links[].source/target 可能已被 D3 解析为节点对象，必须通过 linkEndId 归一化为 id 字符串。
+        const relatedNodes = new Set();
+        const relatedLinks = new Set();
+        if (selectedNodeId) {
+            relatedNodes.add(selectedNodeId);
+            graphData.links.forEach((l, i) => {
+                const sId = linkEndId(l.source), tId = linkEndId(l.target);
+                if (sId === selectedNodeId || tId === selectedNodeId) {
+                    relatedLinks.add(i);
+                    relatedNodes.add(sId);
+                    relatedNodes.add(tId);
+                }
+            });
+        }
+        // 搜索多命中：把所有命中节点并入「不淡出」集合,使它们保持高亮可见(不展开邻居链路)
+        if (extraHlIds) extraHlIds.forEach(id => relatedNodes.add(id));
+        const isHl = d => d.id === selectedNodeId || (extraHlIds && extraHlIds.has(d.id));
+        nodeSel.classed('hl', isHl)
+            .classed('dim', d => !relatedNodes.has(d.id));
+        labelSel.classed('dim', d => !relatedNodes.has(d.id));
+        linkSel.classed('hl', (d, i) => relatedLinks.has(i))
+            .classed('dim', (d, i) => !relatedLinks.has(i));
     }
 
     /** 每帧更新位置 */
@@ -405,16 +478,25 @@
 
     // ==================== 搜索与高亮 ====================
 
-    /** 根据搜索关键字高亮命中节点并点亮其完整引用链路（BFS） */
+    /**
+     * 搜索高亮：直接复用「手动点击节点」的选中高亮函数（selectNode → applySelectionHighlight），
+     * 命中单一节点时再叠加居中效果（focusNode）。不另写一套 BFS 链路高亮逻辑，避免两套高亮重复维护。
+     * 多命中/零命中时不做额外高亮（无第二套逻辑）：保持现有选中态关联高亮，或由用户按 Enter 经
+     * focusNextMatch 循环定位并逐步选中。
+     */
     function applySearchHighlight() {
         if (!nodeSel) return;
         if (!searchKeyword) {
-            nodeSel.classed('dim', false).classed('hl', false);
-            linkSel.classed('dim', false).classed('hl', false);
-            labelSel.classed('dim', false);
+            // 无搜索关键词时,若有选中节点则恢复其关联高亮,否则清除全部高亮
+            if (selectedNodeId) applySelectionHighlight();
+            else {
+                nodeSel.classed('dim', false).classed('hl', false);
+                linkSel.classed('dim', false).classed('hl', false);
+                labelSel.classed('dim', false);
+            }
             return;
         }
-        // 命中节点集合
+        // 命中节点集合（仅用于判断是否唯一命中，以便自动选中 + 居中）
         const hit = new Set();
         graphData.nodes.forEach(n => {
             if (n.id.toLowerCase().includes(searchKeyword)
@@ -422,31 +504,19 @@
                 hit.add(n.id);
             }
         });
-        // 唯一匹配优化：仅命中一个节点时自动选中并居中，免去用户手动定位
-        // （命中多个或零个时不强制跳转，避免输入过程抖动；多结果仍可用 Enter 循环定位）
+        // 唯一匹配优化：仅命中一个节点时复用点击高亮函数（含邻居关联高亮）+ 居中，免去用户手动定位。
+        // 多命中或零命中不强制跳转（避免输入过程抖动；多结果仍可用 Enter 循环定位）。
         if (hit.size === 1) {
-            const onlyId = [...hit][0];
-            const onlyNode = graphData.nodes.find(n => n.id === onlyId);
+            const onlyNode = graphData.nodes.find(n => n.id === [...hit][0]);
             if (onlyNode && nodeSel) {
-                selectNode(onlyNode);   // 高亮选中态（跨重绘持久）
-                focusNode(onlyNode);    // 平移至画布中心并放大
+                selectNode(onlyNode, true);   // 复用点击高亮（force=true 固定选中，不 toggle）
+                focusNode(onlyNode);          // 平移至画布中心并放大
             }
+        } else if (!selectedNodeId) {
+            // 多命中且当前无选中态：复用选中态高亮函数,仅把所有命中节点点亮(不展开邻居链路),
+            // 其余节点淡出,让用户一眼看到全部匹配结果(无需再写一套高亮逻辑)。
+            applySelectionHighlight(hit);
         }
-        // BFS 沿出/入边点亮关联链路
-        const related = new Set(hit);
-        const queue = [...hit];
-        while (queue.length) {
-            const cur = queue.shift();
-            graphData.links.forEach(l => {
-                if (l.source === cur && !related.has(l.target)) { related.add(l.target); queue.push(l.target); }
-                if (l.target === cur && !related.has(l.source)) { related.add(l.source); queue.push(l.source); }
-            });
-        }
-        nodeSel.classed('hl', d => hit.has(d.id))
-            .classed('dim', d => !related.has(d.id));
-        labelSel.classed('dim', d => !related.has(d.id));
-        linkSel.classed('hl', d => related.has(d.source) && related.has(d.target))
-            .classed('dim', d => !(related.has(d.source) && related.has(d.target)));
     }
 
     /** Enter 键在多个命中结果间循环定位（缩放到目标居中） */
@@ -580,7 +650,7 @@
         renderCtxItems(menu, [
             { label: '查看引用上下文', action: () => jumpToSource(srcId) },
             { label: '解除引用（定位编辑）', action: () => jumpToSource(srcId) },
-            { label: d.strength === 'strong' ? '切换为弱引用' : '切换为强引用', action: () => alert('引用强弱由内容语法（@{}/window.调用/eda.调用）自动判定，无需手动切换') }
+            { label: d.strength === 'strong' ? '切换为弱引用' : '切换为强引用', action: () => alert('引用强弱由内容语法（@name/window.调用/eda.调用）自动判定，无需手动切换') }
         ]);
         menu.style.display = 'block';
         // 浮层挂 .dm-panel 且采用 absolute 定位，坐标需换算为相对宿主左上角

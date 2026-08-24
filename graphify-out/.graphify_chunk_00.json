@@ -1,0 +1,363 @@
+{
+  "nodes": [
+    {
+      "id": "readme",
+      "label": "README 中文主文档",
+      "file_type": "document",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_en",
+      "label": "README English",
+      "file_type": "document",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.en.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "changelog",
+      "label": "CHANGELOG 更新日志",
+      "file_type": "document",
+      "source_file": "D:\\projects\\pro-schematic-ai\\CHANGELOG.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_project_overview",
+      "label": "项目概览 EDA 原理图 AI 助手 VSCode 扩展",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_architecture",
+      "label": "整体架构 VSCode 扩展 + 多 Agent 协作",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_vscode_extension",
+      "label": "VSCode 扩展宿主",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_ai_chat",
+      "label": "AI 对话 自然语言问答与上下文管理",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_tool_calling",
+      "label": "工具调用 EDA API 读取原理图",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_code_execution",
+      "label": "代码执行 ARK 生成代码块",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_knowledge_graph",
+      "label": "知识图谱 D3 力导向图",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_drawer_panel",
+      "label": "抽屉面板 右侧多栏",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_safety_confirmation",
+      "label": "安全确认 执行前用户确认",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_private_server_mode",
+      "label": "私服模式 外部私服后端转发",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_chat_interface_module",
+      "label": "对话主界面模块",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_data_drawer_module",
+      "label": "数据管理抽屉模块 提示词与工具",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "readme_relation_graph_module",
+      "label": "关系图谱模块",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    },
+    {
+      "id": "changelog_v1_0_6",
+      "label": "v1.0.6 可控可透视可定制",
+      "file_type": "concept",
+      "source_file": "D:\\projects\\pro-schematic-ai\\CHANGELOG.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "readme",
+      "target": "readme_project_overview",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme",
+      "target": "readme_architecture",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_architecture",
+      "target": "readme_vscode_extension",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_architecture",
+      "target": "readme_ai_chat",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_ai_chat",
+      "target": "readme_tool_calling",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_ai_chat",
+      "target": "readme_code_execution",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_ai_chat",
+      "target": "readme_knowledge_graph",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_ai_chat",
+      "target": "readme_drawer_panel",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_code_execution",
+      "target": "readme_safety_confirmation",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_private_server_mode",
+      "target": "readme_architecture",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_chat_interface_module",
+      "target": "readme_ai_chat",
+      "relation": "rationale_for",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_data_drawer_module",
+      "target": "readme_drawer_panel",
+      "relation": "rationale_for",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_relation_graph_module",
+      "target": "readme_knowledge_graph",
+      "relation": "rationale_for",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "changelog",
+      "target": "changelog_v1_0_6",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\CHANGELOG.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "readme_en",
+      "target": "readme",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "D:\\projects\\pro-schematic-ai\\README.en.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

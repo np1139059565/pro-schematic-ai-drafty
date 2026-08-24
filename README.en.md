@@ -5,29 +5,68 @@
 > For detailed developer documentation, visit: [https://prodocs.lceda.cn/cn/api/guide/](https://prodocs.lceda.cn/cn/api/guide/)
 
 
+## What's New in v1.0.7
+
+This release focuses on making the AI's instruction framework more focused, capability retrieval more precise, and the underlying structure cleaner. Highlights:
+
+- **🧭 Progressive Prompt Refactoring**: The original 13 prompts were reorganized into an on-demand drill-down structure of "minimal index `prompt_index` + 5 domain packages `domain_*` + 5 knowledge leaves `knowledge_*` + 3 execution leaves `execution_*`". Only the index is injected on first load, with per-scenario subsets fetched on demand, easing focus dilution from long enumerations.
+- **🧩 Curated Tool Aggregation**: Each tool's implementation and its `*_SCHEMA` metadata (description / parameters / semantic tags / source / domain) are now co-located; new `semantic_tags`/`source`/`domain` fields mean adding or removing a tool touches only one place.
+- **🔀 Unified Tool Entry**: `callTool` acts as a protocol shell dispatching all curated tools and native EDA functions; `listTools({scenario})`/`listPrompts({domain})` cut injected tool count down to ~8–12; `searchTools` is enhanced with entry self-described `semantic_tags` inverted-index retrieval, replacing the central registry.
+- **📁 MCP Module Relocation**: The former top-level `eda-api.js`, `mcp-eda.js`, `mcp-prompt.js` and `vendor/*.min.js` were consolidated into the `iframe/mcp/` directory, cleanly separating the protocol shell from curated tools / prompts / resources.
+
+> For full history, see the "Changelog" section below and `CHANGELOG.md`.
+
+
 ## Feature Overview
 
 AI巧绘 is an intelligent tool designed specifically for schematic designers, featuring the following core capabilities:
 
 1. **AI Chat**: Supports natural language Q&A with context management for quick answers to schematic design questions
 2. **Tool Calling**: AI can invoke EDA APIs to read schematic information, such as querying selected components and reading schematic structures
-3. **Code Execution**: Integrated with Volcano Engine ARK API to generate and execute code for design scenarios; AI-generated code blocks support inline editing before execution
+3. **Code Execution**: Integrated with Volcano Engine ARK to generate code blocks for design scenarios; AI-generated code blocks support inline editing and run only after user confirmation (or with auto-execute enabled)
 4. **Knowledge Graph**: D3 force-directed graph visualizing tool call chains and component relationships, with search-to-center and node highlighting
 5. **Drawer Panel**: Six-tab drawer on the right (Graph / Prompts / Tools / EDA Functions / Resources / Logs) for one-click browsing
 6. **Safety Confirmation**: Code execution requires user confirmation before running; an auto-execute toggle is available for streamlined workflows
 
-### Private Server System Features
+### Private Server Mode
 
-The private server mode provides an independent Token billing and user management system with the following advanced features:
+This extension can connect to an **external private server backend** for conversations (the backend forwards requests to ARK). Clarification:
 
-- **Dual-Mode Package Coexistence**: Pure Token packages (no time limit, cumulative purchases) and time-limited packages (day/week/month/quarter/year) can coexist
-- **Token Deduction Priority**: Prioritize consuming time-limited package tokens, then pure Token package quota after exhaustion
-- **Multi-Mode Login**: UUID mode based on URL uinfo parameter + manual mode based on username+password (graceful degradation when URL has no uinfo)
-- **Secure Hash Transmission**: User passwords and admin keys are SHA-256 hashed on the frontend before transmission, eliminating plaintext transmission
-- **Avatar Dropdown Menu**: User page top-right corner provides "Change Password" and "Logout" entries
-- **Multi-Model Management**: Supports dynamic multi-model configuration and intelligent fallback switching
+- This extension only provides a "Private Server Login" jump entry. After logging in on the server page, the user obtains a Token to use in configuration.
 
-See `ai_schematic_private/README.md` for details
+---
+
+## Core Modules & Collaboration
+
+AI巧绘 is not a single chat box; it is a set of interfaces and an underlying data layer that each play a distinct role. Understanding how they divide the work helps you use it more efficiently.
+
+| Module | What it is | What it does for you |
+| --- | --- | --- |
+| **Chat Interface** | The daily Q&A and operation entry | Describe needs in natural language; AI returns code blocks that can be executed on the canvas, editable before confirmation |
+| **Data Drawer** (right-side six tabs) | Stores the "fuel" that drives the AI: prompts and tools | View / edit prompts (the AI's instruction framework) and tools (what the AI can call), so the AI fits your design habits |
+| **Relation Graph** | Draws the drawer's data as a reference network | Before making changes, see clearly "which prompts a tool affects" to avoid breaking the AI by accidental deletion |
+
+**How they work together (one-line summary)**:
+
+> You describe needs in the **Chat Interface** → the AI relies on **prompts and tools in the Data Drawer** to understand and act → the **Relation Graph** helps you trace reference relationships among them.
+
+Typical workflow:
+
+1. First use: just chat; the AI works on built-in default prompts and tools.
+2. Want team-specific conventions: open the "Data" drawer, first "Import → Import from Source" to activate the database, then edit prompts or add/remove tools.
+3. Unsure before editing: switch to the "Graph" tab to see the references of the item, then decide whether to edit or delete.
+
+## Quick Start
+
+Get started in three steps:
+
+1. **Install the extension**: Search "AI巧绘" in the EasyEDA Pro Extension Manager, or import the build output locally.
+   ![Import AI巧绘 Extension](images/import.gif)
+2. **Configure the AI channel**: Open the chat interface → click **Settings** in the top-right → fill in the Volcano Engine ARK API Key (or check "Use Private Server" and log in on the server page first to claim a Token).
+   ![Configure API Key Before Use](images/apikey.gif)
+3. **Start chatting**: Describe your need in the input box (e.g., "query detailed info of the selected component"), then click **Confirm Execution** on the AI's code block to apply it on the canvas.
+
+> Advanced usage (editing prompts / tools, viewing the reference graph) is covered in the "Data Drawer" and "Relation Graph" sections below, which require activating the local database via "Import → Import from Source" first.
 
 ## Getting Started
 
@@ -97,9 +136,9 @@ Describe the task requirements in natural language, and AI will understand the t
 
 AI can generate and execute code based on the conversation content for reading or modifying schematics. Code execution mechanism:
 
-- **Confirm Execution**: By default, AI-generated code is displayed in the chat interface and requires clicking the "Confirm Execution" button to run
-- **Auto Execution**: After enabling the "Auto Execute" toggle in the top-right corner of the chat interface, code will automatically execute after 2 seconds
-- **Safety Mechanism**: Write operations (modifying schematics) require confirmation by default to prevent accidental modification of design files
+- **Confirm Execution**: By default, AI-generated code blocks are displayed in the chat interface and require clicking the "Confirm Execution" button to run, preventing accidental edits to your design
+- **Auto Execution**: After enabling the "Auto Execute" toggle in the top-right corner, code blocks run automatically after a short delay, suitable for repeated batch operations
+- **Editable**: You can modify parameters or logic in the code block before execution, and it runs with your adjusted content
 
 Supported operations include:
 - Batch modify component parameters
@@ -107,26 +146,26 @@ Supported operations include:
 - Create wire connections
 - Query and analyze schematic structure
 
-### Right-Side Drawer Panel
+### Data Drawer (Right-Side Six Tabs)
 
-The chat interface features a six-tab drawer on the right, switchable with one click:
+Click the **Data** button in the top-right of the chat interface to open the right-side drawer. It shows built-in data in **read-only preview** by default; after clicking "Import → Import from Source" to activate the local database, editing becomes available. The six tabs each address one concern:
 
-- **Graph**: D3 force-directed graph visualizing AI tool call chains and component relationships, with search-to-center and node highlighting
-- **Prompts**: 14 preset prompt templates (system prompts, workflow templates, scenario templates, etc.), click to insert into chat
-- **Tools**: Displays 33 available tools (27 custom tools + 6 MCP meta-tools), with search filtering and direct execution
-- **EDA Functions**: Complete list of EasyEDA native APIs for easy reference and invocation
-- **Resources**: Manage locally imported tools and prompt data, supporting import/export
-- **Logs**: Complete records of each AI conversation round, with JSON content supporting hierarchical folding
+- **Graph**: A reference-network diagram of prompts and tools. *When to use*: before editing or deleting an item, check here to see "which items it affects", avoiding accidental deletion that breaks the AI.
+- **Prompts**: The AI's instruction framework (system prompts, role-based framework prompts, etc.). *When to use*: when you want to adjust the AI's tone, expertise, or constraints (e.g., component-selection rules), view or edit here.
+- **Tools**: Custom tools and wrapped capabilities the AI can call directly. *When to use*: when you want to extend what the AI can do (e.g., a new batch operation), view or add here.
+- **EDA Functions**: The complete list of EasyEDA native APIs. *When to use*: look up a native interface's capability and parameters as a reference for writing tools.
+- **Resources**: Resource entries maintained by imported data files. *When to use*: view imported assets (view-only).
+- **Logs**: Complete request/response records of each conversation. *When to use*: when reviewing what the AI actually called or why it failed, trace by session here.
 
 ![Drawer Panel](images/drawer.gif)
 
-### Knowledge Graph
+### Relation Graph
 
-The graph panel presents AI tool call relationships and component association networks as a force-directed graph:
+The graph panel presents the reference relationships among prompts and tools as a force-directed graph:
 
-- Node size reflects reference strength; edge width distinguishes strong/weak references
-- Click a node to highlight its association path (magenta stroke)
-- Search auto-centers on unique matching nodes
+- A larger node means it is referenced more often; a thicker edge means a stronger call relationship (weak references are shown as dashed lines)
+- Click a node to highlight its associated chain; double-click a node to jump to its editing panel
+- Search auto-centers on the unique matching node
 - Hover over nodes to view detailed information
 
 ![Knowledge Graph](images/graph.gif)
@@ -141,12 +180,12 @@ AI-generated code blocks support inline editing while remaining executable:
 
 ### Data Import & Export
 
-The Resources panel provides local data management:
+The data panel provides local data management:
 
-- **Import Default**: Load built-in tools and prompt data
-- **Import from Source**: Import custom tools or prompts from external JSON files
-- **Export**: Export current data as a JSON backup file
-- Data is stored in IndexedDB and persists after closing the extension
+- **Import Data**: A prompt lets you choose "Import from Source" (load built-in tools and prompts; also the entry point to activate the database for the first time) or "Import from Local File" (import custom tools or prompts from an external JSON file)
+- **Reset to Factory Default**: A separate entry that restores the database to the built-in default data (not part of the import flow above)
+- **Export**: Export current data as a single JSON backup file to share with others
+- **Storage**: All data is stored in the browser's local IndexedDB database (backed by AlaSQL for SQL capabilities), persisting after the extension is closed, with no network required
 
 ![Data Import & Export](images/import-data.gif)
 
