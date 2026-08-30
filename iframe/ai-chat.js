@@ -40,10 +40,21 @@ let configCancelBtn; // 配置取消按钮
 let arkApiKeyInput; // API Key 输入框
 let arkModelInput; // API Model 输入框
 let arkModelInputContainer; // API Model 输入框容器（用于显示/隐藏）
-let usePrivateServerCheckbox; // 使用私服复选框
+let usePrivateServerCheckbox; // 使用私服复选框（旧版遗留，仅保留引用，逻辑已由连接模式选择器取代）
+let customApiKeyInput; // 自定义模式 API Key 输入框
+let customBaseUrlInput; // 自定义模式 Base URL 输入框
+let customModelInput; // 自定义模式 Model 输入框
+let arkApiKeyContainer; // API Key 配置项容器（按模式显隐）
+let customApiKeyContainer; // 自定义 API Key 配置项容器
+let customBaseUrlContainer; // 自定义 Base URL 配置项容器
+let customModelContainer; // 自定义 Model 配置项容器
+let modelInfoEl; // 状态栏「当前模型」展示位
+let packageInfoEl; // 状态栏「已领取套餐」展示位
 let autoExecWriteCheckbox; // 自动执行复选框
 let autoExecWriteEnabled = false; // 自动执行开关（默认关闭）
-let usePrivateServer = false; // 是否使用私服（默认使用 ARK API）
+let usePrivateServer = false; // 是否为私服模式（由 connectionMode 派生，保持旧逻辑兼容）
+// 连接模式：'private'(私服) | 'ark'(ARK 官网) | 'custom'(用户自配主流模型兼容端点，第三种模式)
+let connectionMode = 'private';
 
 // 对话历史数组，用于维护上下文
 let conversationHistory = []; // 存储所有对话消息，格式：[{role: 'user', content: '...'}, {role: 'assistant', content: '...'}]
@@ -270,7 +281,16 @@ function init() {
 	arkApiKeyInput = document.getElementById('arkApiKeyInput');
 	arkModelInput = document.getElementById('arkModelInput');
 	arkModelInputContainer = document.getElementById('arkModelInputContainer'); // 获取 API Model 输入框容器
-	usePrivateServerCheckbox = document.getElementById('usePrivateServerCheckbox'); // 获取使用私服复选框
+	arkApiKeyContainer = document.getElementById('arkApiKeyContainer'); // 获取 API Key 配置项容器
+	customApiKeyInput = document.getElementById('customApiKeyInput'); // 获取自定义 API Key 输入框
+	customBaseUrlInput = document.getElementById('customBaseUrlInput'); // 获取自定义 Base URL 输入框
+	customModelInput = document.getElementById('customModelInput'); // 获取自定义 Model 输入框
+	customApiKeyContainer = document.getElementById('customApiKeyContainer'); // 获取自定义 API Key 配置项容器
+	customBaseUrlContainer = document.getElementById('customBaseUrlContainer'); // 获取自定义 Base URL 配置项容器
+	customModelContainer = document.getElementById('customModelContainer'); // 获取自定义 Model 配置项容器
+	modelInfoEl = document.getElementById('modelInfo'); // 获取状态栏模型信息展示位
+	packageInfoEl = document.getElementById('packageInfo'); // 获取状态栏套餐信息展示位
+	usePrivateServerCheckbox = document.getElementById('usePrivateServerCheckbox'); // 保留引用（已不再作为主开关）
 	autoExecWriteCheckbox = document.getElementById('autoExecWriteCheckbox'); // 获取自动执行复选框
 
 	// 绑定事件监听器
@@ -288,8 +308,10 @@ function init() {
 		autoExecWriteEnabled = autoExecWriteCheckbox.checked; // 更新写入自动执行开关状态
 	}); // 复选框切换事件
 	autoExecWriteCheckbox.checked = autoExecWriteEnabled; // 初始化复选框状态为默认关闭
-	// 使用私服复选框切换事件
-	usePrivateServerCheckbox.addEventListener('change', handlePrivateServerToggle); // 绑定切换事件
+	// 连接模式三选一：监听 radio 组变化，动态显隐对应配置项
+	document.querySelectorAll('input[name="connMode"]').forEach((radio) => {
+		radio.addEventListener('change', handleConnectionModeChange); // 绑定模式切换事件
+	});
 	// 输入框事件
 	messageInput.addEventListener('keydown', (e) => {
 		// 按 Enter 发送（Shift+Enter 换行）
@@ -644,6 +666,160 @@ function collectToolDescriptions() {
  * 调用 AI API 并处理响应
  * 包括调用 API、解析响应、添加 AI 回复到界面和历史
  */
+/**
+ * 依据当前连接模式返回对应的对话通道函数
+ * 三态映射：private→callPrivateChat（私服代理） / custom→callCustomChat（用户自配端点） / ark→callArkChat（ARK 官网直连）
+ * 统一收口对话分发，避免在各调用点重复三元判断。
+ * @returns {Function} 对话通道函数
+ */
+function getChatCaller() {
+	if (connectionMode === 'private') return window.ArkAPI.callPrivateChat;
+	if (connectionMode === 'custom') return window.ArkAPI.callCustomChat;
+	return window.ArkAPI.callArkChat;
+}
+
+/**
+ * 取当前用量上报应携带的模型名
+ * 私服模式由服务端决定模型，客户端未知，传空（服务端按用户记录）；
+ * ARK / 自定义模式直接取本地配置的模型名。
+ * @returns {string} 模型名
+ */
+function usageModelName() {
+	if (connectionMode === 'private') return '';
+	if (connectionMode === 'custom') return localStorage.getItem('custom_model') || '';
+	return localStorage.getItem('api_model') || '';
+}
+
+/**
+ * 上报单次对话的 Token 消耗（仅私服模式生效，best-effort 不阻塞）
+ * 非私服模式无对应账户，直接跳过；上报失败（网络/服务端异常）一律静默忽略，不影响对话主流程。
+ * 优先使用 navigator.sendBeacon（即使页面卸载也能送达），降级到 fire-and-forget fetch。
+ * @param {string} model - 模型名（私服模式由服务端决定，此处可传空）
+ * @param {number} totalTokens - 总 token 消耗
+ * @param {number} inputTokens - 输入 token 数
+ * @param {number} outputTokens - 输出 token 数
+ * @param {string} conversationId - 会话标识（用于聚合）
+ */
+function reportTokenUsage(model, totalTokens, inputTokens, outputTokens, conversationId) {
+	if (connectionMode !== 'private') return; // 仅私服模式需上报用量
+	const apiKey = localStorage.getItem('api_key') || '';
+	if (!apiKey) return;
+	const payload = {
+		user_api_key: apiKey,
+		model: model || '',
+		input_tokens: inputTokens || 0,
+		output_tokens: outputTokens || 0,
+		total_tokens: totalTokens || 0,
+		conversation_id: conversationId || '',
+	};
+	try {
+		const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+		if (navigator.sendBeacon) {
+			// sendBeacon 不受页面卸载影响，最适合旁路统计上报
+			navigator.sendBeacon(`${getPrivateServerUrl()}/api/usage`, blob);
+		} else {
+			fetch(`${getPrivateServerUrl()}/api/usage`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			}).catch(() => {}); // 失败静默忽略
+		}
+	} catch (e) {
+		// 任何异常都不应影响对话
+		console.error('[ai-chat] Token 用量上报失败(已忽略):', e);
+	}
+}
+
+/**
+ * 刷新状态栏「当前模型」展示
+ * 私服模式：向服务端拉取实际模型（服务端按多模型策略动态选择），拉取失败/无模型时显示中性占位；
+ * 非私服模式：直接展示本地配置的模型名，绝不发起请求，确保不会出现 API 不兼容报错。
+ */
+function refreshModelInfo() {
+	if (!modelInfoEl) return;
+	if (connectionMode === 'private') {
+		const apiKey = localStorage.getItem('api_key') || '';
+		if (!apiKey) { modelInfoEl.textContent = '模型: 未登录'; return; }
+		fetch(`${getPrivateServerUrl()}/api/model-info?user_api_key=${encodeURIComponent(apiKey)}`)
+			.then(r => r.json().catch(() => ({})))
+			.then(d => { modelInfoEl.textContent = (d && d.model) ? `模型: ${d.model}` : '模型: 未知'; })
+			.catch(() => { modelInfoEl.textContent = '模型: 未知'; });
+	} else {
+		// 非私服模式本地即可得知模型，无需请求
+		const localModel = connectionMode === 'custom'
+			? (localStorage.getItem('custom_model') || '')
+			: (localStorage.getItem('api_model') || '');
+		modelInfoEl.textContent = localModel ? `模型: ${localModel}` : '模型: 未配置';
+	}
+}
+
+/**
+ * 刷新状态栏「已领取套餐」展示（仅私服模式）
+ * 展示领取的模型类型与剩余数量，并标注该额度来自「管理员免费 token 拆分」。
+ * 非私服模式无对应账户，清空展示。
+ */
+function refreshPackageInfo() {
+	if (!packageInfoEl) return;
+	if (connectionMode !== 'private') { packageInfoEl.textContent = ''; return; }
+	const apiKey = localStorage.getItem('api_key') || '';
+	if (!apiKey) { packageInfoEl.textContent = ''; return; }
+	fetch(`${getPrivateServerUrl()}/api/user/package?user_api_key=${encodeURIComponent(apiKey)}`)
+		.then(r => r.json().catch(() => ({})))
+		.then(d => {
+			if (!d || !d.claimed) { packageInfoEl.textContent = ''; return; }
+			const splitNote = d.is_admin_free_split ? '（管理员免费额度拆分）' : '';
+			packageInfoEl.textContent = `套餐: ${d.model || '未知'} · 剩余 ${d.remaining}${splitNote}`;
+		})
+		.catch(() => { packageInfoEl.textContent = ''; });
+}
+
+/**
+ * 故障上报（对话不可预知报错时，由错误气泡内的「上报此问题」链接触发）
+ * 收集错误堆栈/上下文，经客服通道提交给管理员；非私服用户（无账户/会话）引导先注册登录。
+ * @param {Error} error - 原始错误对象（含 message / stack / requestBody）
+ */
+function handleFaultReport(error) {
+	// 故障上报依赖私服账户：非私服模式无法提交，明确引导用户先注册登录私服
+	if (connectionMode !== 'private') {
+		alert('故障上报需要先注册并登录私服用户。\n请前往私服领取 token 后，使用「私服」模式使用本插件。');
+		return;
+	}
+	const apiKey = localStorage.getItem('api_key') || '';
+	if (!apiKey) {
+		alert('故障上报需要先登录私服用户。\n请在配置中选择「私服」模式并填写你的 API Key。');
+		return;
+	}
+
+	// 组装错误上下文：时间、模式、错误文本、堆栈、最近请求体
+	let content = '【插件故障上报】\n';
+	content += `时间: ${new Date().toLocaleString()}\n`;
+	content += `连接模式: ${connectionMode}\n`;
+	const localModel = localStorage.getItem('api_model') || localStorage.getItem('custom_model') || '';
+	content += `模型(本地配置): ${localModel || '(由私服决定)'}\n`;
+	if (error) {
+		if (error.message) content += `错误信息: ${error.message}\n`;
+		if (error.stack) content += `堆栈: ${error.stack}\n`;
+		if (error.requestBody) content += `请求体: ${JSON.stringify(error.requestBody).slice(0, 2000)}\n`;
+	}
+
+	// 可选的用户补充说明
+	const note = prompt('可补充问题描述（选填，将随错误一并上报给管理员）：', '');
+	if (note !== null && note.trim()) content += `用户补充: ${note.trim()}\n`;
+
+	fetch(`${getPrivateServerUrl()}/api/support/report`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ user_api_key: apiKey, content, msg_type: 'text' }),
+	})
+		.then(r => { if (!r.ok) throw new Error('status ' + r.status); return r.json(); })
+		.then(() => {
+			alert('已上报给管理员。\n您可在普通用户页面的「客服」入口查看管理员回复。');
+		})
+		.catch(() => {
+			alert('上报失败，请稍后重试，或直接在「客服」入口描述问题。');
+		});
+}
+
 async function callAIAndHandleResponse() {
 
 	// 确保系统消息在对话历史中
@@ -655,7 +831,7 @@ async function callAIAndHandleResponse() {
 	try {
 		// 根据配置选择调用 ARK API 或私服 API
 		apiPromise =
-			window.ArkAPI[usePrivateServer ? 'callPrivateChat' : 'callArkChat'](
+			getChatCaller()(
 				conversationHistory, previousResponseId, isAddTool ? collectToolDescriptions() : null,
 				window.AbortManager.createTimeoutSignal(60000)); // 调用 API(绑定 60s 超时+手动取消信号)
 
@@ -674,6 +850,11 @@ async function callAIAndHandleResponse() {
 		totalTokensAccumulated += (response.data.usage && response.data.usage.total_tokens) || 0; // 累加 tokens
 		console.info(`total_tokens 累计：${totalTokensAccumulated}`, 'history', conversationHistory);//打印对话历史和累计 tokens
 		refreshStatusToken(); // 刷新状态栏 token 消耗统计(并入 statusText)
+		// 私服模式下异步上报本次 Token 消耗（best-effort，不影响对话）
+		reportTokenUsage(usageModelName(), (response.data.usage && response.data.usage.total_tokens) || 0,
+			(response.data.usage && response.data.usage.input_tokens) || 0,
+			(response.data.usage && response.data.usage.output_tokens) || 0,
+			currentSessionId || '');
 
 		// 解析 AI 回复
 		const parsedResponse = parseAIResponse(response.data); // 解析响应
@@ -953,6 +1134,11 @@ async function continueConversationAfterTools(toolInputMessages) {
 		totalTokensAccumulated += (response.data.usage && response.data.usage.total_tokens) || 0; // 累加 tokens
 		console.info('history', conversationHistory, `total_tokens 累计：${totalTokensAccumulated}`);//打印对话历史和累计 tokens
 		refreshStatusToken(); // 刷新状态栏 token 消耗统计(并入 statusText)
+		// 私服模式下异步上报本次 Token 消耗（best-effort，不影响对话）
+		reportTokenUsage(usageModelName(), (response.data.usage && response.data.usage.total_tokens) || 0,
+			(response.data.usage && response.data.usage.input_tokens) || 0,
+			(response.data.usage && response.data.usage.output_tokens) || 0,
+			currentSessionId || '');
 
 		// 解析响应
 		const parsedResponse = parseAIResponse(response.data); // 解析响应
@@ -1078,6 +1264,30 @@ function handleAIError(error, errorPrefix = 'AI 请求失败', onResend = null) 
 			contentDiv.appendChild(resendBtn); // 添加重新发送按钮
 		} catch (btnErr) {
 			console.error('[ai-chat] 重新发送按钮渲染失败(不影响错误提示):', btnErr);
+		}
+	}
+
+	// 仅「不可预知」类错误（UNKNOWN / NETWORK / TIMEOUT / PARSE）才展示故障上报链接；
+	// 鉴权/限流/参数等可预期问题与工具执行错误不引导上报。
+	// 上报链接点击后收集错误堆栈经客服通道提交管理员（见 handleFaultReport）。
+	const reportableTypes = [
+		window.ErrorHandler.ErrorType.UNKNOWN,
+		window.ErrorHandler.ErrorType.NETWORK,
+		window.ErrorHandler.ErrorType.TIMEOUT,
+		window.ErrorHandler.ErrorType.PARSE,
+	];
+	if (reportableTypes.includes(info.type) && messageDiv) {
+		try {
+			const reportLink = document.createElement('a'); // 创建上报链接
+			reportLink.className = 'error-report-link'; // 设置类名
+			reportLink.textContent = '📣 上报此问题'; // 链接文案
+			reportLink.href = 'javascript:void(0)'; // 阻止页面跳转
+			reportLink.style.cssText = 'display:inline-block;margin-top:6px;color:#667eea;cursor:pointer;text-decoration:underline;';
+			reportLink.onclick = () => handleFaultReport(error); // 点击触发上报
+			const contentDiv = messageDiv.querySelector('.message-content') || messageDiv;
+			contentDiv.appendChild(reportLink); // 追加到错误气泡末尾
+		} catch (linkErr) {
+			console.error('[ai-chat] 上报链接渲染失败:', linkErr);
 		}
 	}
 }
@@ -1468,13 +1678,19 @@ function loadConfig() {
 		// 从 localStorage 读取配置
 		const savedApiKey = localStorage.getItem('api_key'); // 读取 API Key
 		const savedModel = localStorage.getItem('api_model'); // 读取 API Model
-		const rawPrivateFlag = localStorage.getItem('use_private_server'); // 读取私服标记原始值(从未保存过时为 null)
+		const rawMode = localStorage.getItem('connection_mode'); // 读取连接模式（新字段）
 
-		// 优先采用持久化的私服标记;从未保存过(首次使用)时回退:根据 model 是否为空决定(为空默认走私服)
-		usePrivateServer = rawPrivateFlag !== null ? rawPrivateFlag === 'true' : !savedModel;
+		// 向后兼容旧版二态配置：未显式保存 connection_mode 时,按 model 是否为空推导
+		// （私服模式 model 为空 → 'private'；ARK 官网模式有 model → 'ark'）
+		connectionMode = rawMode || (savedModel ? 'ark' : 'private');
+		usePrivateServer = connectionMode === 'private'; // 派生旧布尔,供兼容逻辑使用
 
 		// 调用 ark-api.js 的更新配置函数
-		window.ArkAPI.updateConfig(savedApiKey || '', savedModel || ''); // 更新配置
+		window.ArkAPI.updateConfig(savedApiKey || '', savedModel || ''); // 更新核心配置
+
+		// 配置加载后刷新模型/套餐展示（私服模式异步拉取，非私服模式读本地配置）
+		refreshModelInfo();
+		refreshPackageInfo();
 	} catch (error) {
 		// 捕获配置加载错误
 		console.error('加载配置失败:', error); // 输出错误日志
@@ -1482,27 +1698,38 @@ function loadConfig() {
 }
 
 /**
- * 处理使用私服复选框切换事件
- * 根据复选框状态显示/隐藏 API Model 输入框
- * 当私服使用状态真正发生改变（即切换了 API 类型）时，立即清空对话记录，
- * 因为旧历史上下文对切换后的 API 而言可能无法识别。
+ * 依据当前选中的连接模式，显隐对应配置项
+ * private：仅 API Key（私服 Key）
+ * ark：API Key + API Model
+ * custom：自定义 API Key + Base URL + Model
+ * @param {string} mode - 连接模式
  */
-function handlePrivateServerToggle() {
-	const newUsePrivateServer = usePrivateServerCheckbox.checked; // 读取复选框最新状态
-	if (newUsePrivateServer !== usePrivateServer) {
-		// 私服状态发生改变，立即清空页面记录
-		usePrivateServer = newUsePrivateServer; // 更新使用私服状态
+function applyModeVisibility(mode) {
+	const showArkKey = (mode === 'private' || mode === 'ark'); // 私服/ARK 均需 API Key
+	const showArkModel = (mode === 'ark'); // 仅 ARK 官网需填 Model
+	const showCustom = (mode === 'custom'); // 自定义模式专属三项
+	if (arkApiKeyContainer) arkApiKeyContainer.style.display = showArkKey ? 'block' : 'none';
+	if (arkModelInputContainer) arkModelInputContainer.style.display = showArkModel ? 'block' : 'none';
+	if (customApiKeyContainer) customApiKeyContainer.style.display = showCustom ? 'block' : 'none';
+	if (customBaseUrlContainer) customBaseUrlContainer.style.display = showCustom ? 'block' : 'none';
+	if (customModelContainer) customModelContainer.style.display = showCustom ? 'block' : 'none';
+}
+
+/**
+ * 处理连接模式三选一切换事件
+ * 切换 API 类型时立即清空对话记录，因为旧历史上下文对切换后的 API 而言可能无法识别，
+ * 并按新选中的模式显隐对应配置项。
+ */
+function handleConnectionModeChange() {
+	const checked = document.querySelector('input[name="connMode"]:checked'); // 读取选中的模式
+	const newMode = checked ? checked.value : 'private'; // 缺省回退私服
+	if (newMode !== connectionMode) {
+		// 连接模式真正改变，立即清空页面记录
+		connectionMode = newMode; // 更新连接模式
+		usePrivateServer = (newMode === 'private'); // 派生旧布尔
 		resetConversationRecords(); // 清空对话记录，避免旧历史被 AI 误识别
 	}
-
-	// 根据状态显示/隐藏 Model 输入框
-	if (newUsePrivateServer) {
-		// 如果使用私服，隐藏 Model 输入框
-		arkModelInputContainer.style.display = 'none'; // 隐藏容器
-	} else {
-		// 如果使用 ARK API，显示 Model 输入框
-		arkModelInputContainer.style.display = 'block'; // 显示容器
-	}
+	applyModeVisibility(newMode); // 按模式显隐配置项
 }
 
 /**
@@ -1513,15 +1740,24 @@ function handleConfigClick() {
 	// 从 localStorage 读取当前配置值
 	const currentApiKey = localStorage.getItem('api_key') || ''; // 读取当前 API Key
 	const currentModel = localStorage.getItem('api_model') || ''; // 读取当前 Model
-	const usePrivateServerValue = (currentModel == '') ? true : false; // 读取是否使用私服
+	const mode = localStorage.getItem('connection_mode') || (currentModel ? 'ark' : 'private'); // 读取连接模式
+	const customKey = localStorage.getItem('custom_api_key') || ''; // 读取自定义 API Key
+	const customBaseUrl = localStorage.getItem('custom_base_url') || ''; // 读取自定义 Base URL
+	const customModel = localStorage.getItem('custom_model') || ''; // 读取自定义 Model
 
 	// 填充输入框
 	arkApiKeyInput.value = currentApiKey; // 设置 API Key 输入框值
 	arkModelInput.value = currentModel; // 设置 Model 输入框值
-	usePrivateServerCheckbox.checked = usePrivateServerValue; // 设置使用私服复选框状态
-	// 仅同步界面显示状态，不触发清空（此处只是打开配置，尚未保存修改）
-	arkModelInputContainer.style.display = usePrivateServerValue ? 'none' : 'block';
-	usePrivateServer = usePrivateServerValue; // 更新使用私服状态
+	customApiKeyInput.value = customKey; // 设置自定义 API Key
+	customBaseUrlInput.value = customBaseUrl; // 设置自定义 Base URL
+	customModelInput.value = customModel; // 设置自定义 Model
+
+	// 选中对应模式 radio（仅同步界面，不触发清空）
+	const radio = document.querySelector(`input[name="connMode"][value="${mode}"]`);
+	if (radio) radio.checked = true; // 选中当前模式
+	connectionMode = mode; // 更新全局连接模式
+	usePrivateServer = (mode === 'private'); // 派生旧布尔
+	applyModeVisibility(mode); // 按模式显隐配置项
 
 	// 显示配置对话框
 	configDialog.style.display = 'block'; // 显示对话框
@@ -1543,35 +1779,50 @@ function handleSaveConfig() {
 	try {
 		// 获取输入框的值
 		const apiKey = arkApiKeyInput.value.trim(); // 获取 API Key 并去除首尾空格
-		const newUsePrivateServer = usePrivateServerCheckbox.checked; // 获取私服开关最新状态
-		const model = newUsePrivateServer ? '' : arkModelInput.value.trim(); // 如果使用私服，model 为空；否则获取 Model 并去除首尾空格
+		const modeRadio = document.querySelector('input[name="connMode"]:checked'); // 读取选中的连接模式
+		const newMode = modeRadio ? modeRadio.value : 'private'; // 缺省回退私服
+		// 私服模式 model 为空；ARK 官网模式取 API Model；自定义模式 model 由专属字段承载
+		const model = (newMode === 'private') ? '' : arkModelInput.value.trim();
+		const customKey = customApiKeyInput.value.trim(); // 自定义 API Key
+		const customBaseUrl = customBaseUrlInput.value.trim(); // 自定义 Base URL
+		const customModel = customModelInput.value.trim(); // 自定义 Model
 
-		// 与已保存配置对比，检测私服 API 是否真正发生修改
+		// 与已保存配置对比，检测是否真正发生修改（含模式与自定义字段）
 		const savedApiKey = localStorage.getItem('api_key') || ''; // 读取已保存的 API Key
 		const savedModel = localStorage.getItem('api_model') || ''; // 读取已保存的 Model
-		const savedUsePrivateServer = (savedModel == '') ? true : false; // 还原已保存的私服状态
+		const savedMode = localStorage.getItem('connection_mode') || (savedModel ? 'ark' : 'private'); // 还原已保存模式
+		const savedCustomKey = localStorage.getItem('custom_api_key') || ''; // 已保存自定义 Key
+		const savedCustomBaseUrl = localStorage.getItem('custom_base_url') || ''; // 已保存自定义 Base URL
+		const savedCustomModel = localStorage.getItem('custom_model') || ''; // 已保存自定义 Model
 
 		const configChanged =
 			apiKey !== savedApiKey || // API Key 变化
 			model !== savedModel || // Model 变化
-			newUsePrivateServer !== savedUsePrivateServer; // 私服开关变化（切换 API 类型）
+			newMode !== savedMode || // 连接模式变化（切换 API 类型）
+			customKey !== savedCustomKey || // 自定义 Key 变化
+			customBaseUrl !== savedCustomBaseUrl || // 自定义 Base URL 变化
+			customModel !== savedCustomModel; // 自定义 Model 变化
 
-		// 修改私服 API 后清空页面记录，避免旧历史被不同服务端返回的上下文污染
+		// 修改 API 后清空页面记录，避免旧历史被不同服务端返回的上下文污染
 		if (configChanged) {
 			resetConversationRecords(); // 清空对话记录
 		}
 
-		// 同步全局私服状态（确保后续请求使用最新的 API 类型）
-		usePrivateServer = newUsePrivateServer; // 更新使用私服状态
+		// 同步全局连接模式（确保后续请求使用最新的 API 类型）
+		connectionMode = newMode; // 更新连接模式
+		usePrivateServer = (newMode === 'private'); // 派生旧布尔
 
-		// 持久化私服开关标记(与 model 联动:私服时 model 为空),供刷新后 loadConfig 恢复相同通道
-		localStorage.setItem('use_private_server', String(newUsePrivateServer)); // 保存私服标记
-
-		// 更新 ARK API 模块配置
-		window.ArkAPI.updateConfig(apiKey, model); // 更新配置
+		// 持久化：私服开关标记（与 model 联动）+ 核心两项 + 模式与自定义字段
+		localStorage.setItem('use_private_server', String(newMode === 'private')); // 保存私服标记
+		window.ArkAPI.updateConfig(apiKey, model); // 更新核心配置
+		window.ArkAPI.updateConnectionConfig(newMode, customKey, customBaseUrl, customModel); // 更新模式与自定义配置
 
 		// 关闭配置对话框
 		handleCloseConfig(); // 关闭对话框
+
+		// 配置变更后刷新模型/套餐展示（私服模式异步拉取）
+		refreshModelInfo();
+		refreshPackageInfo();
 
 		// 显示成功提示
 		updateStatus(configChanged ? '配置已保存，对话记录已清空' : '配置已保存', 'success'); // 更新状态

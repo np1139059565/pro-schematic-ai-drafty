@@ -72,9 +72,9 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    /** 取得图谱容器元素（.dm-panel 内部 .dm-graph） */
+    /** 取得图谱容器元素（.dm-panel 内部 .dm-graph-canvas） */
     function getGraphHost() {
-        return document.querySelector('.dm-graph');
+        return document.querySelector('.dm-graph-canvas');
     }
 
     /**

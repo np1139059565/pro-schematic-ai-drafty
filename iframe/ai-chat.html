@@ -46,6 +46,8 @@
 				</div>
 				<div class="status-bar">
 					<span id="statusText" class="status-text"></span>
+					<span id="modelInfo" class="status-info" title="当前使用的模型"></span>
+					<span id="packageInfo" class="status-info" title="已领取的套餐信息"></span>
 				</div>
 			</div>
 		</div>
@@ -68,18 +70,33 @@
 						 </p>
 				</div>
 				<div class="config-item">
-					<label>
-						<input type="checkbox" id="usePrivateServerCheckbox" class="config-checkbox" />
-						使用私服
-					</label>
+					<label>连接模式：</label>
+					<div class="mode-selector">
+						<label class="mode-option"><input type="radio" name="connMode" value="private" /> 私服</label>
+						<label class="mode-option"><input type="radio" name="connMode" value="ark" /> ARK 官网</label>
+						<label class="mode-option"><input type="radio" name="connMode" value="custom" /> 自定义模型</label>
+					</div>
 				</div>
-				<div class="config-item">
+				<div class="config-item" id="arkApiKeyContainer">
 					<label for="arkApiKeyInput">API Key:</label>
-					<input type="text" id="arkApiKeyInput" class="config-input" placeholder="请输入 API Key" />
+					<input type="text" id="arkApiKeyInput" class="config-input" placeholder="私服用户API Key / ARK API Key" />
 				</div>
 				<div class="config-item" id="arkModelInputContainer">
-					<label for="arkModelInput">API Model:</label>
-					<input type="text" id="arkModelInput" class="config-input" placeholder="请输入 API Model" />
+					<label for="arkModelInput">API Model (ARK官网):</label>
+					<input type="text" id="arkModelInput" class="config-input" placeholder="如 glm-5.2 / deepseek-v4-pro" />
+				</div>
+				<!-- 第三种模式：用户自配主流模型兼容端点（deepseek / glm 等） -->
+				<div class="config-item custom-only" id="customApiKeyContainer">
+					<label for="customApiKeyInput">自定义 API Key:</label>
+					<input type="text" id="customApiKeyInput" class="config-input" placeholder="如 sk-...（deepseek / glm 等）" />
+				</div>
+				<div class="config-item custom-only" id="customBaseUrlContainer">
+					<label for="customBaseUrlInput">Base URL:</label>
+					<input type="text" id="customBaseUrlInput" class="config-input" placeholder="https://api.deepseek.com/v1" />
+				</div>
+				<div class="config-item custom-only" id="customModelContainer">
+					<label for="customModelInput">Model:</label>
+					<input type="text" id="customModelInput" class="config-input" placeholder="如 deepseek-chat" />
 				</div>
 			</div>
 				<div class="config-footer">

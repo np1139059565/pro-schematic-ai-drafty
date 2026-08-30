@@ -1,4 +1,4 @@
-# 嘉立创 EDA 原理图设计 AI 执行框架（AI巧绘）设计说明
+# AI执行框架设计说明（AI巧绘）
 
 > 本文档基于插件实际源码整理，覆盖 `src/`、`iframe/`、`extension.json` 的整体架构、模块职责、核心流程与关键实现细节。
 > 包名 `pro-schematic-ai-drafty`，运行依赖 `eda >= 2.3.0`。
@@ -115,7 +115,7 @@
 | `abort-signal.js` | `window.AbortManager` | 取消信号单点管理，替代旧的全局 `isStop` 标志：`createAbortController`（每轮会话重建）、`createTimeoutSignal(ms)`（`AbortSignal.any` 合并超时与手动取消）、`abortCurrent`（真正中断 fetch）、`endAbortSession`、`isCancelled`（供渲染层只读查询） |
 | `mcp/prompts.js` | `window.promptList` | 提示列表：prompt_index（全局索引，含提示检索方法）+ 5 个 domain 流程提示（需求/元件/布线/验证/选择）+ 5 个 knowledge 知识叶（间距/布局/布线/工具/碰撞）+ 3 个 execution 执行叶（react/plan/guidance） |
 | `eda-api.js` | `window.edaApi` | 自动生成的全量原生 EDA API 工具清单（约 17900 行，供 `searchTools` 检索），「出厂默认1.0」数据载体 |
-| `mcp/meta-tools.js` | `window.mcpProtocol` | MCP 协议壳（要素③ functions 的协议层）：callTool/listTools/validateArguments/buildTextResponse/matchLeafTool 等通用方法 + listResources/readResource/listPrompts/getPrompt 要素访问入口 + 元工具（searchTools/getTool 等）；语义倒排索引（SEMANTIC_ALIASES/buildInvertedIndex/queryToTags）跨「提示词+函数」桥接；本文件「超级对象挂载区」集中挂载 |
+| `mcp/meta-tools.js` | `window.mcpProtocol` | MCP 协议壳（要素③ functions 的协议层）：callTool/listTools/validateArguments/buildTextResponse 等通用方法 + listResources/readResource/listPrompts/getPrompt 要素访问入口 + 元工具（searchTools/getTool 等）；本文件「超级对象挂载区」集中挂载 |
 | `mcp/curated-tools/index.js` | `window.curatedTools` | 精选工具池（要素③ functions 的具体实现）：针对原理图场景封装的 26 个高频工具（元件/导线/多边形/选择/边界计算等），每个工具采用「实现 + *_SCHEMA 元数据中置」的单元聚合；`curatedToolSchemas` 由 *_SCHEMA 聚合生成；与 mcp/meta-tools.js 并列于 mcp/ 目录 |
 | `mcp/resources.js` | `window.resourceList` | 资源清单：出厂默认内置**海量**嘉立创原理图 EDA 开发资料（按主题域铺开，根索引 `resource_jlc_sch_overview` 作导航入口，资源节点默认折叠、可经 `@uri` 被提示词引用），`data-store.js` 仅负责激活后覆盖。`window.resourceList` 在本文件内定义与挂载，与 mcp/meta-tools.js/mcp/curated-tools/index.js 并列于 mcp/ 目录 |
 | `data-store.js` | `window.dataStore` | 本地数据层：出厂快照捕获、IndexedDB（AlaSQL）读写、导入（`importFromMemory` 从内存快照首次激活 / `importLocalFiles` 从本地 JSON 文件 / `importFromFile` 单 JSON，合并策略按修改标记）、导出（`exportAll` 主入口 → `exportData` 单个 JSON；另有 `exportFactoryJs` 出厂快照 JS 作为编程接口保留）、删除（`deleteDatabase`）、单条与全量恢复默认、运行时缓存刷新（内部函数 `refreshRuntimeCache`，含函数体重建与 system 消息即时生效）；另提供引用检测 `findReferences`、名称抽取 `extractNames`、引用标记还原 `stripRefMarks`、图谱数据派生 `buildGraph` 与日志存储 API |
@@ -158,10 +158,10 @@
 
 ### 3.5 工具系统（MCP 封装 + 自定义工具）
 
-**原生 API 清单**：`eda-api.js` 导出 `window.edaApi`，是自动生成的全部 `eda.*` 原生 API 描述（含 name/description/inputSchema）。它被 `searchTools`（在 `curatedTools` 中）用于按关键词检索原生 API。
+**原生 API 清单**：`eda-api.js` 导出 `window.edaApi`，是自动生成的全部 `eda.*` 原生 API 描述（含 name/description/inputSchema）。它被 `searchTools`（定义于 `mcp/meta-tools.js`，随 `metaToolSchemas` 挂载）用于按关键词检索原生 API。
 
 **MCP 元工具**（`window.mcpProtocol.metaToolSchemas`，随对话注入模型）：
-`callTool`、`listTools`、`listResources`、`readResource`、`listPrompts`、`getPrompt` 共 6 个通用工具。模型通过它们间接操作原理图与获取提示。
+`callTool`、`listTools`、`getTool`、`listResources`、`readResource`、`searchResources`、`listPrompts`、`getPrompt`、`searchTools` 共 9 个通用工具。模型通过它们间接操作原理图与获取提示。
 
 **自定义工具**（`window.curatedTools.*` + `window.curatedTools.curatedToolSchemas`）：针对原理图设计的高频操作做了封装与安全校验，命名风格为 `类名$方法名`（如 `sch_PrimitiveComponent$create`）。核心类别：
 
@@ -170,7 +170,7 @@
 - 多边形（边界）：`sch_PrimitivePolygon$create(Batch)`、`sch_PrimitivePolygon$delete`、`sch_PrimitivePolygon$getAll`。
 - 几何辅助：`calculateComponentBounds(Batch)`（按引脚计算元件最小外接矩形）、`getCanvasSize`（读取画布边界，默认 1170×825 mil）。
 - 选择/交互：`sch_SelectControl$getAllSelectedPrimitives/doSelectPrimitives/clearSelected/getCurrentMousePosition`、`dmt_EditorControl$zoomToSelectedPrimitives`。
-- 文档：`sys_FileManager$getDocumentFootprintSources`、`searchTools`。
+- 文档：`sys_FileManager$getDocumentFootprintSources`。
 
 **函数与元数据聚合（相似集聚）**
 
@@ -255,7 +255,7 @@
 
 ### 4.5 资源（Resource）能力说明
 
-`window.resourceList` 的出厂默认集由**独立文件 `mcp/resources.js`** 定义（随页面加载先于 `data-store.js` 执行，与 `window.promptList` / `window.edaApi` 同属原始 JS 常量层），内置**海量**嘉立创原理图 EDA 开发资料，按主题域铺开（基础操作/图元详解/元件/网络/符号封装/设计规则/层次化/导入导出/BOM/协作/AI 工作流/快捷键/常见错误排查等），以根索引 `resource_jlc_sch_overview` 作导航入口；`data-store.js` 通过 `factoryDefaults.resourceList`（取自该默认集）+ `buildFactoryResourceRows()` 将其转为数据库行，与 `buildFactoryPromptRows` / `buildFactoryToolRows` 完全对称（导入/导出流程原生支持 `resources` 项，见 §4.6 与 §5 导入导出）。`readResource` 对不存在的 URI 抛出 `RESOURCE_NOT_FOUND` 错误。资源可在数据管理抽屉的「资源」分栏查看与编辑（显示态 @引用高亮 + 编辑态表单保存，与提示词分栏完全同构，调用 `dataStore.updateResource(uri, {description, content})`），支持单条恢复出厂默认（调用 `dataStore.resetResource(uri)`），并通过导入 `psa-export.v*.json` 数据文件补充或更新。提示词经 `@uri` 引用资源，图谱中表现为 `prompt_tool` 连线、资源节点默认折叠（紫色，图例展开或经引用出现）。
+`window.resourceList` 的出厂默认集由**独立文件 `mcp/resources.js`** 定义（随页面加载先于 `data-store.js` 执行，与 `window.promptList` / `window.edaApi` 同属原始 JS 常量层），内置**海量**嘉立创原理图 EDA 开发资料，按主题域铺开（基础操作/图元详解/元件/网络/符号封装/设计规则/层次化/导入导出/BOM/协作/AI 工作流/快捷键/常见错误排查等），以根索引 `resource_jlc_sch_overview` 作导航入口；`data-store.js` 通过 `factoryDefaults.resourceList`（取自该默认集）+ `buildFactoryResourceRows()` 将其转为数据库行，与 `buildFactoryPromptRows` / `buildFactoryToolRows` 完全对称（导入/导出流程原生支持 `resources` 项，见 §4.6）。`readResource` 对不存在的 URI 抛出 `RESOURCE_NOT_FOUND` 错误。资源可在数据管理抽屉的「资源」分栏查看与编辑（显示态 @引用高亮 + 编辑态表单保存，与提示词分栏完全同构，调用 `dataStore.updateResource(uri, {description, content})`），支持单条恢复出厂默认（调用 `dataStore.resetResource(uri)`），并通过导入 `psa-export.v*.json` 数据文件补充或更新。提示词经 `@uri` 引用资源，图谱中表现为 `prompt_tool` 连线、资源节点默认折叠（紫色，图例展开或经引用出现）。
 
 ### 4.6 本地数据化（data-store.js + editor-drawer.js + graph-view.js）
 
@@ -282,7 +282,7 @@
   上述真实调用在图谱侧（`buildGraph`）同样构成 `tool_call` / `native_fallback` 连线，因此「代码高亮」与「图谱边」同源，二者始终一致；编辑器信息卡能否命中，取决于该名称是否登记在 `window.curatedTools.curatedToolSchemas` / `window.mcpProtocol.metaToolSchemas` / `window.edaApi` 中（调用入口本身如 `callTool` 不在清单内，信息卡显示「未找到」属正常）。运行时「超级对象」（`window.mcpProtocol` / `window.curatedTools` / `window.resourceList` / `window.edaApi` / `window.promptList`）的统一定义与挂载边界见 `mcp/meta-tools.js` 与 `mcp/curated-tools/index.js` 顶部「超级对象挂载区」。
   - **切割规则**：全局对象调用只取「第一级方法名」（字符集不含 `.`），链式后缀（如 `window.curatedTools.curatedToolSchemas.find` 中的 `.find`）不并入引用名——否则会落到不存在的名称上，高亮后也无法双击跳转。该切割在编辑器高亮（`extractVisibleRefs`）与图谱边（`buildGraph`）中采用同一规则，二者一致。
 - **图谱派生**：`buildGraph()` 从主表实时派生 `{nodes, links}`。节点类型分为 `prompt`（提示词）、`custom`（精选工具）、`mcp`（MCP 元工具）、`jdb`（EDA 原生 API）、`resource`（EDA 开发资料）五类，EDA 原生 API 与资源资料默认折叠（图例可展开，被提示词 `@uri` 引用时随连线出现），避免海量节点淹没图谱；连线类型分为 `prompt_ref`、`prompt_tool`、`tool_call`（三者为强引用）与 `native_fallback`、`example_call`（弱引用）共五种，`strength` 仅取 `strong`/`weak` 两值。`prompt_tool` 同时承载「提示词引用函数」与「提示词引用资源」两类目标（目标是资源时连线落地到 `resource` 节点），`describes`（描述-实现配对）仅保留类型定义与图例配色，**不生成连线**——其 source 与 target 必为同一节点，无信息增量且会被渲染成节点旁的带箭头弧线，该关系改由节点半径与 tooltip 出入度表达。所有抽取点均跳过 `source === target` 自环边，渲染层 `draw()` 另做一次过滤作为双保险。
-- **调用日志**：数据库激活后，每次 `sendMessage` 以 `previous_response_id` 划分会话边界——当 `previous_response_id` 为 `null`（对话真正重新开始、上下文未串联上一轮）时由 `ai-chat.js` 新建会话（`startLogSession` → `pro_schematic_ai_log_sessions`），否则复用当前会话 `currentSessionId`，把本轮请求经 `appendLog` 写入、响应返回后经 `updateLogResponse` 回填。会话按 `created_at` 倒序、轮次按 `turn` 正序；连续多轮对话因 `previous_response_id` 串联而归属同一会话，更贴合真实对话流程。日志持久化为 fire-and-forget，不阻塞对话主流程，失败仅控制台告警。日志详情渲染**仅保留最外层整轮折叠**：请求 / 响应快照不再各自整体折叠，而将 JSON 内容经 `renderJsonFoldable` 按 `{ } [ ]` 真实层级递归生成可折叠单元（每个对象 / 数组默认展开，**仅 `{`/`[` 前保留折叠 / 展开箭头图标（▶/▼，CSS `::before` 提供），不显示任何键名 / 数量等统计文字、闭合 `}`/`]` 后也不附加符号**；字符串字面量内的括号因基于结构解析而天然排除）；`dm-json-fold` 提供箭头图标与类型着色。**复制方式调整**：移除原「双击整轮复制」交互，改为在每轮标题栏（`summary`）右侧提供「复制」按钮，点击经剪贴板复制该轮完整请求 / 响应 JSON（按钮 `stopPropagation` 避免误触折叠）；会话详情头部另提供「复制全部」按钮，一键复制该会话全部轮次的请求 / 响应 JSON，并展示累计 token 消耗总量（逐轮累加响应快照 `usage.total_tokens`）。日志为只读快照，不参与导入 / 导出 / 恢复默认；「清空日志」仅清空 `chat_sessions` 与 `chat_logs` 两表，不影响业务数据。
+- **调用日志**：数据库激活后，每次 `sendMessage` 以 `previous_response_id` 划分会话边界——当 `previous_response_id` 为 `null`（对话真正重新开始、上下文未串联上一轮）时由 `ai-chat.js` 新建会话（`startLogSession` → `chat_sessions`），否则复用当前会话 `currentSessionId`，把本轮请求经 `appendLog` 写入、响应返回后经 `updateLogResponse` 回填。会话按 `created_at` 倒序、轮次按 `turn` 正序；连续多轮对话因 `previous_response_id` 串联而归属同一会话，更贴合真实对话流程。日志持久化为 fire-and-forget，不阻塞对话主流程，失败仅控制台告警。日志详情渲染**仅保留最外层整轮折叠**：请求 / 响应快照不再各自整体折叠，而将 JSON 内容经 `renderJsonFoldable` 按 `{ } [ ]` 真实层级递归生成可折叠单元（每个对象 / 数组默认展开，**仅 `{`/`[` 前保留折叠 / 展开箭头图标（▶/▼，CSS `::before` 提供），不显示任何键名 / 数量等统计文字、闭合 `}`/`]` 后也不附加符号**；字符串字面量内的括号因基于结构解析而天然排除）；`dm-json-fold` 提供箭头图标与类型着色。**复制方式调整**：移除原「双击整轮复制」交互，改为在每轮标题栏（`summary`）右侧提供「复制」按钮，点击经剪贴板复制该轮完整请求 / 响应 JSON（按钮 `stopPropagation` 避免误触折叠）；会话详情头部另提供「复制全部」按钮，一键复制该会话全部轮次的请求 / 响应 JSON，并展示累计 token 消耗总量（逐轮累加响应快照 `usage.total_tokens`）。日志为只读快照，不参与导入 / 导出 / 恢复默认；「清空日志」仅清空 `chat_sessions` 与 `chat_logs` 两表，不影响业务数据。
 
 ---
 
@@ -318,7 +318,7 @@
 
 **已知局限 / 后续可优化**
 - 出厂默认已内置嘉立创原理图 EDA 开发资料（见 §4.5），按主题域铺开，覆盖原理图概念地图、图元/元件 API、导线/网络、符号库/封装、设计规则、文档格式与 AI 自动生成工作流；如需补充领域私有资料，可通过导入 `psa-export.v*.json` 数据文件（importFromFile 已原生支持 resources 项）更新。
-- 注入模型的仅 6 个通用 MCP 元工具，自定义工具的具体参数 Schema 主要靠提示词文本描述，模型对参数结构依赖"从流程提示中识别工具名 + `callTool` 传参"；该问题已通过 `*_SCHEMA` 聚合（实现与 schema 紧邻）+ `semantic_tags` 语义检索得到缓解——`listTools({scenario})` 可按场景返回白名单子集，`searchTools` 叠加标签相似度打分，进一步实现按需检索。
+- 注入模型的仅 9 个通用 MCP 元工具，自定义工具的具体参数 Schema 主要靠提示词文本描述，模型对参数结构依赖"从流程提示中识别工具名 + `callTool` 传参"；该问题已通过 `*_SCHEMA` 聚合（实现与 schema 紧邻）+ `semantic_tags` 语义检索得到缓解——`listTools({scenario})` 可按场景返回白名单子集，`searchTools` 叠加标签相似度打分，进一步实现按需检索。
 - 数据写入采用「内存缓存 + 整表覆写」的保守策略，条目规模显著增长后写入开销会线性上升。
 - 关系图谱默认折叠 `jdb`（EDA 原生 API）类型节点，全量展开时节点数较多，需依赖图例过滤与搜索聚焦来控制可读性。
 - 出厂提示词已完成 `@名称` 引用标记化：提示词侧的三类引用（提示词引用提示词/引用工具、「推荐工具」清单）当前均可被解析，导入出厂默认后图谱中即出现提示词侧连线；引用关系同时来自工具 `impl_code` 的互调与 `eda.*` 原生调用。

@@ -5,14 +5,15 @@
 > For detailed developer documentation, visit: [https://prodocs.lceda.cn/cn/api/guide/](https://prodocs.lceda.cn/cn/api/guide/)
 
 
-## What's New in v1.0.7
+## What's New in v1.0.8
 
-This release focuses on making the AI's instruction framework more focused, capability retrieval more precise, and the underlying structure cleaner. Highlights:
+This release focuses on "connection-mode expansion, model transparency, reportable failures, and observable usage". Highlights:
 
-- **🧭 Progressive Prompt Refactoring**: The original 13 prompts were reorganized into an on-demand drill-down structure of "minimal index `prompt_index` + 5 domain packages `domain_*` + 5 knowledge leaves `knowledge_*` + 3 execution leaves `execution_*`". Only the index is injected on first load, with per-scenario subsets fetched on demand, easing focus dilution from long enumerations.
-- **🧩 Curated Tool Aggregation**: Each tool's implementation and its `*_SCHEMA` metadata (description / parameters / semantic tags / source / domain) are now co-located; new `semantic_tags`/`source`/`domain` fields mean adding or removing a tool touches only one place.
-- **🔀 Unified Tool Entry**: `callTool` acts as a protocol shell dispatching all curated tools and native EDA functions; `listTools({scenario})`/`listPrompts({domain})` cut injected tool count down to ~8–12; `searchTools` is enhanced with entry self-described `semantic_tags` inverted-index retrieval, replacing the central registry.
-- **📁 MCP Module Relocation**: The former top-level `eda-api.js`, `mcp-eda.js`, `mcp-prompt.js` and `vendor/*.min.js` were consolidated into the `iframe/mcp/` directory, cleanly separating the protocol shell from curated tools / prompts / resources.
+- **🔀 Third Connection Mode**: Besides the existing "Private Server" and "ARK Official" modes, the config dialog adds a "Custom Model" mode where you can fill in your own API Key / Base URL / Model (e.g. deepseek, glm and other OpenAI-compatible endpoints) and use it out of the box.
+- **🏷️ Current Model Display**: The status bar now shows a "Model" badge — in private-server mode the server returns the actual serving model, and in other modes it shows the locally configured model, so you always know which model you are using.
+- **📣 One-Click Failure Report**: When an unexpected error occurs, a "Report this issue" link appears at the end of the error bubble; it auto-collects the stack trace and submits it to the admin via the support channel. Non-private-server users are guided to register first.
+- **📊 Token Traffic Analysis**: Every conversation now reports its Token consumption; the admin page gains a "Token Traffic" tab with day/week/month bar charts for capacity and cost analysis.
+- **🎁 Claimed Info Transparency**: The user package block shows the claimed model type and remaining amount.
 
 > For full history, see the "Changelog" section below and `CHANGELOG.md`.
 
@@ -154,8 +155,10 @@ Click the **Data** button in the top-right of the chat interface to open the rig
 - **Prompts**: The AI's instruction framework (system prompts, role-based framework prompts, etc.). *When to use*: when you want to adjust the AI's tone, expertise, or constraints (e.g., component-selection rules), view or edit here.
 - **Tools**: Custom tools and wrapped capabilities the AI can call directly. *When to use*: when you want to extend what the AI can do (e.g., a new batch operation), view or add here.
 - **EDA Functions**: The complete list of EasyEDA native APIs. *When to use*: look up a native interface's capability and parameters as a reference for writing tools.
-- **Resources**: Resource entries maintained by imported data files. *When to use*: view imported assets (view-only).
+- **Resources**: Reference material for EasyEDA schematic development. *When to use*: when you want to adjust or supplement the knowledge the AI can cite (e.g., interface usage notes), view or edit here.
 - **Logs**: Complete request/response records of each conversation. *When to use*: when reviewing what the AI actually called or why it failed, trace by session here.
+
+**What this drawer does for you**: You can optimize the plugin's local behavior by editing prompts or adding "Curated Tools" (e.g., supplementing component-selection rules or wrapping a batch operation). Once you have polished useful data, export it as JSON and submit a Pull Request on GitHub; after the admin approves and merges it, that data becomes available to more users. If you have feature requests or improvement ideas, you can also reach the admin directly through the "Support" channel below — we are glad to hear from you.
 
 ![Drawer Panel](images/drawer.gif)
 
@@ -222,6 +225,7 @@ The data panel provides local data management:
 ## Feedback & Support
 
 - Issues: https://github.com/np1139059565/pro-schematic-ai-drafty/issues
+- Support channel: Use the "Support" entry in the plugin chat interface to talk directly with the admin — for feature requests, usage questions, or failure reports, the admin will see and reply promptly.
 - Please back up your design files before use; it is recommended to verify in a test project first
 
 ## Contributing

@@ -105,6 +105,10 @@ async function callTool(params) {
 		const { name, arguments: args } = params;
 		// 解析真实目标工具名:处理前端 dispatcher 中转场景(前端恒传 name="callTool")。
 		const targetName = (name === 'callTool' && args && typeof args.name === 'string') ? args.name : name;
+		// 解析真实工具参数:dispatcher 中转场景下 args 是 {name, arguments} 包装,真实参数位于
+		// 内层 arguments 字段,须解包后再校验与分发;直接调用场景下 args 本身即工具参数。
+		const isDispatch = name === 'callTool' && args && typeof args.arguments === 'object' && args.arguments !== null;
+		const toolArgs = isDispatch ? args.arguments : (args || {});
 		const [className, methodName] = targetName.split('.');
 		const toolSchema = window.mcpProtocol.listTools().tools.find(tool => tool.name === targetName) ||
 		window.edaApi.find(tool => tool.name === targetName);
@@ -114,7 +118,7 @@ async function callTool(params) {
 		if (toolSchema.enabled === false) {
 			return buildTextResponse(`工具已禁用: ${targetName}`, true);
 		}
-		const validateResult = validateArguments(args || {}, toolSchema?.inputSchema);
+		const validateResult = validateArguments(toolArgs, toolSchema?.inputSchema);
 		if (validateResult !== null) {
 			return buildTextResponse(`工具参数验证失败: ${validateResult}`, false);
 		}
@@ -128,13 +132,13 @@ async function callTool(params) {
 			|| window.curatedTools[curatedKey];
 		let result;
 		if (typeof curatedImpl === 'function') {
-			result = await curatedImpl(args || {});
+			result = await curatedImpl(toolArgs);
 		} else {
 			const nativeTool = eda[className]?.[methodName];
 			if (typeof nativeTool !== 'function') {
 				return buildTextResponse(`工具不存在: ${targetName}`, true);
 			}
-			result = await nativeTool(...Object.values(args || {}));
+			result = await nativeTool(...Object.values(toolArgs));
 		}
 		if (result !== null && ['string', 'number', 'boolean', 'object'].includes(typeof result)) {
 			return buildTextResponse(typeof result === 'string' ? result : JSON.stringify(result, null, 2), false);

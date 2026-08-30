@@ -1,6 +1,6 @@
 {
 	"name": "pro-schematic-ai-drafty",
-	"version": "1.0.7",
+	"version": "1.0.8",
 	"description": "通过AI助手，可以快速生成原理图，并自动放置元件",
 	"author": "JLCEDA",
 	"license": "Apache-2.0",

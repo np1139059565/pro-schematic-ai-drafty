@@ -21,6 +21,7 @@
 
 let PRIVATE_SERVER_URL = 'https://113.46.209.138'; // 私服地址
 let ARK_API_URL = 'https://ark.cn-beijing.volces.com/api/v3'; // API 基础地址
+let CUSTOM_API_URL = 'https://api.deepseek.com/v1'; // 自定义主流模型兼容端点默认地址（用户可在配置中覆盖）
 
 
 
@@ -245,35 +246,135 @@ async function callArkChat(mhistory, previousResponseId = null, tools = [], sign
  * 用户API Key用于在私服中认证身份和记录token使用
  * @returns {Object} {key:API Key,model:API model}
  */
+/**
+ * 直连用户自定义的主流模型兼容端点（第三种配置模式：用户自配 API Key / Base URL / Model）
+ * 与 callArkChat 共用同一套 Responses API 请求体结构,仅把 baseUrl / key / model 改为用户提供的值,
+ * 从而在不改动对话主流程的前提下,支持 deepseek / glm 等 OpenAI 兼容端点的接入。
+ * @param {Array} mhistory - 消息历史数组
+ * @param {string|null} previousResponseId - 上一轮响应的 ID（用于多轮对话）
+ * @param {Array} tools - MCP 工具描述数组
+ * @param {AbortSignal|null} signal - 超时与手动取消的合并信号
+ * @returns {Promise<Object>} API响应数据
+ */
+async function callCustomChat(mhistory, previousResponseId = null, tools = [], signal = null) {
+	let requestBody = null;
+	try {
+		const isToolResultBatch = mhistory.length > 0 && mhistory[0].type !== undefined; // 判断是否为工具结果增量批次
+		// 复用与 callArkChat 完全一致的请求体结构（Responses API）,保证多轮/工具结果批次行为一致
+		requestBody = {
+			input: isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]],
+			store: true,
+			caching: { "type": "enabled" },
+			temperature: 0.2,
+			top_p: 0.9,
+		};
+		const config = getConfig();
+		// 自定义模式必须提供：自定义 API Key + 自定义 Model；Base URL 缺省回退到默认值
+		if (!config.customKey || !config.customModel) {
+			throw new Error('自定义模式需要配置 API Key 与 Model,请点击上方按钮进行配置后使用');
+		}
+		requestBody.model = config.customModel;
+		const baseUrl = (config.customBaseUrl || CUSTOM_API_URL).replace(/\/+$/, ''); // 去除末尾多余斜杠
+
+		// 如果有上一轮响应ID，添加到请求体中
+		if (previousResponseId) {
+			requestBody.previous_response_id = previousResponseId;
+		} else if (mhistory.length === 2) {
+			requestBody.input = mhistory;
+		}
+
+		// 如果有工具，则添加到请求体中(转换MCP工具为ARK格式)
+		if (tools && tools.length > 0) {
+			requestBody.tools = tools.map(tool => ({
+				type: 'function',
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.inputSchema,
+			}));
+		}
+
+		// 发送 POST 请求到用户自定义的 Responses 端点
+		const response = await fetch(`${baseUrl}/responses`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${config.customKey}`,
+			},
+			body: JSON.stringify(requestBody),
+			signal,
+		});
+
+		if (!response.ok) {
+			const errorText = await response.text();
+			const err = new Error(`HTTP 错误! 状态码: ${response.status}\n${errorText}`);
+			err.status = response.status;
+			throw err;
+		}
+
+		const result = await response.json();
+		console.log('AI 请求成功(自定义端点):', result);
+		return { data: result, request: requestBody };
+	} catch (error) {
+		error.requestBody = requestBody;
+		console.error('AI 请求失败(自定义端点):', error);
+		throw error;
+	}
+}
+
 function getConfig() {
 	try {
 		// 从 localStorage 读取API Key
 		const apiKey = localStorage.getItem('api_key'); // 读取用户API Key
 		// 从 localStorage 读取API model
 		const apiModel = localStorage.getItem('api_model'); // 读取用户API Key
+		// 三种连接模式：private（私服）/ ark（ARK 官网）/ custom（用户自配主流模型兼容端点）
+		// 旧版仅以 use_private_server + api_model 表达二态,此处做向后兼容迁移：
+		// 未显式保存 connection_mode 时,按 api_model 是否为空推导(private 时 model 为空)
+		const rawMode = localStorage.getItem('connection_mode');
+		const mode = rawMode || (apiModel ? 'ark' : 'private');
 		return {
 			key: apiKey,
 			model: apiModel,
-		}; // 返回API Key和API model
+			mode, // 当前连接模式
+			customKey: localStorage.getItem('custom_api_key') || '', // 自定义模式 API Key
+			customBaseUrl: localStorage.getItem('custom_base_url') || CUSTOM_API_URL, // 自定义模式 Base URL
+			customModel: localStorage.getItem('custom_model') || '', // 自定义模式 Model
+		}; // 返回配置对象
 	} catch (error) {
-		console.error('读取API Key和API model失败:', error); // 输出错误日志
-		return { key: null, model: null }; // 返回{key:null,model:null}
+		console.error('读取API配置失败:', error); // 输出错误日志
+		return { key: null, model: null, mode: 'private', customKey: '', customBaseUrl: CUSTOM_API_URL, customModel: '' };
 	}
 }
 
 /**
- * 更新 ARK API 配置
- * @param apiKey - 用户API Key（从私服获取，用于认证和记录token使用）
- * @param apiModel - API Model（可选，使用私服时为空）
+ * 更新 ARK API 核心配置
+ * @param apiKey - 用户API Key（私服模式下来自私服,用于认证和记录token使用）
+ * @param apiModel - API Model（ARK/自定义模式使用,私服模式为空）
  */
 function updateConfig(apiKey, apiModel) {
 	localStorage.setItem('api_key', apiKey); // 保存用户API Key
 	localStorage.setItem('api_model', apiModel); // 保存API Model
 }
 
+/**
+ * 更新连接模式与自定义端点配置（第三种模式：用户自配主流模型）
+ * @param {string} mode - 'private' | 'ark' | 'custom'
+ * @param {string} customKey - 自定义模式 API Key
+ * @param {string} customBaseUrl - 自定义模式 Base URL
+ * @param {string} customModel - 自定义模式 Model
+ */
+function updateConnectionConfig(mode, customKey, customBaseUrl, customModel) {
+	localStorage.setItem('connection_mode', mode); // 保存连接模式
+	localStorage.setItem('custom_api_key', customKey || ''); // 保存自定义 API Key
+	localStorage.setItem('custom_base_url', customBaseUrl || CUSTOM_API_URL); // 保存自定义 Base URL
+	localStorage.setItem('custom_model', customModel || ''); // 保存自定义 Model
+}
+
 window.ArkAPI = {
 	callArkChat,
 	callPrivateChat,
+	callCustomChat,
 	updateConfig,
+	updateConnectionConfig,
 };
 
