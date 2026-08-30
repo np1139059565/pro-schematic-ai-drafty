@@ -7,9 +7,6 @@ D:\projects\pro-schematic-ai\docs\渐进式智能提示词调优方案.md
 D:\projects\pro-schematic-ai\docs\界面原型说明.md
 D:\projects\pro-schematic-ai\docs\系统设计说明.md
 D:\projects\pro-schematic-ai\iframe\ai-chat.html
-D:\projects\pro-schematic-ai\docs\image.png
-D:\projects\pro-schematic-ai\docs\image1.png
-D:\projects\pro-schematic-ai\docs\image2.png
 D:\projects\pro-schematic-ai\images\apikey.gif
 D:\projects\pro-schematic-ai\images\banner.jpg
 D:\projects\pro-schematic-ai\images\banner.png
