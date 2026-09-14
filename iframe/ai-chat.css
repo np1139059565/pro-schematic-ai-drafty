@@ -236,6 +236,31 @@ body {
 	cursor: pointer;
 }
 
+/* 客户端环境下不可用的模式选项（如客户端下的私服模式）：整体置灰、禁用点击 */
+.mode-selector .mode-option.mode-disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.mode-selector .mode-option.mode-disabled input {
+	cursor: not-allowed;
+}
+
+/* 配置项内的提示条（如客户端不支持私服模式的说明） */
+.config-hint {
+	margin-top: 8px;
+	padding: 10px 12px;
+	font-size: 13px;
+	line-height: 1.6;
+	border-radius: 4px;
+}
+
+.config-hint-warning {
+	background: #fff7e6;
+	border-left: 3px solid #faad14;
+	color: #874d00;
+}
+
 
 .config-input {
 	width: 100%;

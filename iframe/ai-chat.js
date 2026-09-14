@@ -344,6 +344,10 @@ function init() {
 	// 设置初始状态
 	updateUIState(UI_STATE.IDLE); // 初始化界面状态
 	updateStatus('', ''); // 清空状态文本
+
+	// 客户端环境策略：私服模式不可用，置灰选项并在必要时自动回退到 ARK 官网。
+	// 放在状态初始化之后，确保回退提示不会被上面的 updateStatus('') 覆盖。
+	enforceClientPrivateModePolicy();
 }
 
 
@@ -670,6 +674,63 @@ function collectToolDescriptions() {
  * 调用 AI API 并处理响应
  * 包括调用 API、解析响应、添加 AI 回复到界面和历史
  */
+/**
+ * 依据当前连接模式返回对应的对话通道函数
+ * 三态映射：private→callPrivateChat（私服代理） / custom→callCustomChat（用户自配端点） / ark→callArkChat（ARK 官网直连）
+ * 统一收口对话分发，避免在各调用点重复三元判断。
+ * @returns {Function} 对话通道函数
+ */
+/**
+ * 判断当前是否运行在嘉立创 EDA 客户端环境。
+ * 客户端的网络层使用系统级证书校验，私服的自签名证书不被接受，
+ * 导致私服模式下的 HTTPS 请求在 TLS 层即被拒绝、无法送达服务端。
+ * 因此客户端环境下私服模式不可用，只能使用 ARK 官网或自定义模型。
+ * @returns {boolean} true 表示处于客户端环境
+ */
+function isClientEnvironment() {
+	try {
+		// 优先使用 EDA 宿主提供的原生环境判定 API
+		if (window.eda && window.eda.sys_Environment && typeof window.eda.sys_Environment.isClient === 'function') {
+			return !!window.eda.sys_Environment.isClient();
+		}
+	} catch (error) {
+		// 宿主 API 异常时按网页版处理，避免误判阻断正常使用
+		console.error('检测客户端环境失败:', error);
+	}
+	return false;
+}
+
+/**
+ * 客户端环境下禁用私服模式。
+ * 执行三件事：置灰「私服」单选项并禁用其 radio、显示提示条、
+ * 若当前已选中私服则自动切换到「ARK 官网」并提示用户。
+ * 网页版下本函数不做任何事。
+ */
+function enforceClientPrivateModePolicy() {
+	if (!isClientEnvironment()) return; // 非客户端环境不处理
+
+	const privateOption = document.getElementById('modeOptionPrivate'); // 私服单选项容器
+	const hintEl = document.getElementById('privateClientHint'); // 提示条
+	if (privateOption) privateOption.classList.add('mode-disabled'); // 置灰样式
+	// 禁用私服 radio，阻止用户点选
+	const privateRadio = document.querySelector('input[name="connMode"][value="private"]');
+	if (privateRadio) privateRadio.disabled = true;
+	if (hintEl) hintEl.style.display = 'block'; // 显示提示条
+
+	// 若当前模式为私服，自动回退到 ARK 官网并同步界面
+	if (connectionMode === 'private') {
+		connectionMode = 'ark';
+		usePrivateServer = false;
+		// 同步持久化，避免下次打开配置对话框时又从 localStorage 读回 private
+		localStorage.setItem('connection_mode', 'ark');
+		localStorage.setItem('use_private_server', 'false');
+		const arkRadio = document.querySelector('input[name="connMode"][value="ark"]');
+		if (arkRadio) arkRadio.checked = true;
+		applyModeVisibility('ark');
+		updateStatus('客户端不支持私服模式，已切换为 ARK 官网', 'error');
+	}
+}
+
 /**
  * 依据当前连接模式返回对应的对话通道函数
  * 三态映射：private→callPrivateChat（私服代理） / custom→callCustomChat（用户自配端点） / ark→callArkChat（ARK 官网直连）
@@ -1309,6 +1370,16 @@ async function handleSendMessage() {
 		return; // 如果消息为空，直接返回
 	}
 
+	// 客户端环境下拦截私服模式：私服自签名证书无法通过客户端网络层校验，
+	// 请求在 TLS 层即被拒绝（表现为 500），服务端收不到任何日志。
+	if (isClientEnvironment() && connectionMode === 'private') {
+		updateStatus('客户端不支持私服模式，请到「配置」改用「ARK 官网」或「自定义模型」', 'error');
+		setTimeout(() => {
+			updateStatus('', ''); // 延迟清空状态
+		}, 3000);
+		return; // 阻止发送
+	}
+
 	// 日志会话边界划分:以 previous_response_id 为准。
 	// previous_response_id 为 null 表示这是一次全新的对话起点(上下文未串联上一轮),
 	// 此时新建日志会话;previous_response_id 存在表示延续上一轮上下文(真实连续对话),
@@ -1745,7 +1816,13 @@ function handleConfigClick() {
 	// 从 localStorage 读取当前配置值
 	const currentApiKey = localStorage.getItem('api_key') || ''; // 读取当前 API Key
 	const currentModel = localStorage.getItem('api_model') || ''; // 读取当前 Model
-	const mode = localStorage.getItem('connection_mode') || (currentModel ? 'ark' : 'private'); // 读取连接模式
+	let mode = localStorage.getItem('connection_mode') || (currentModel ? 'ark' : 'private'); // 读取连接模式
+	// 客户端环境下私服不可用：若历史配置为私服，打开配置对话框时直接展示 ARK 官网
+	if (isClientEnvironment() && mode === 'private') {
+		mode = 'ark';
+		connectionMode = 'ark';
+		usePrivateServer = false;
+	}
 	const customKey = localStorage.getItem('custom_api_key') || ''; // 读取自定义 API Key
 	const customBaseUrl = localStorage.getItem('custom_base_url') || ''; // 读取自定义 Base URL
 	const customModel = localStorage.getItem('custom_model') || ''; // 读取自定义 Model
@@ -1788,6 +1865,15 @@ function handleSaveConfig() {
 		const apiKey = arkApiKeyInput.value.trim(); // 获取 API Key 并去除首尾空格
 		const modeRadio = document.querySelector('input[name="connMode"]:checked'); // 读取选中的连接模式
 		const newMode = modeRadio ? modeRadio.value : 'private'; // 缺省回退私服
+
+		// 客户端环境下拦截私服模式的保存：私服自签名证书无法通过客户端网络层校验，请求无法送达
+		if (isClientEnvironment() && newMode === 'private') {
+			updateStatus('客户端不支持私服模式，请改用「ARK 官网」或「自定义模型」', 'error');
+			setTimeout(() => {
+				updateStatus('', ''); // 延迟清空状态
+			}, 3000);
+			return; // 阻止保存私服配置
+		}
 		// 私服模式 model 为空；ARK 官网模式取 API Model；自定义模式 model 由专属字段承载
 		const model = (newMode === 'private') ? '' : arkModelInput.value.trim();
 		const customKey = customApiKeyInput.value.trim(); // 自定义 API Key

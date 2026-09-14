@@ -72,9 +72,12 @@
 				<div class="config-item">
 					<label>连接模式：</label>
 					<div class="mode-selector">
-						<label class="mode-option"><input type="radio" name="connMode" value="private" /> 私服</label>
+						<label class="mode-option" id="modeOptionPrivate"><input type="radio" name="connMode" value="private" /> 私服</label>
 						<label class="mode-option"><input type="radio" name="connMode" value="ark" /> ARK 官网</label>
 						<label class="mode-option"><input type="radio" name="connMode" value="custom" /> 自定义模型</label>
+					</div>
+					<div class="config-hint config-hint-warning" id="privateClientHint" style="display: none">
+						客户端环境下无法使用私服模式：私服使用自签名证书，客户端网络层不接受，请求无法送达。请改用「ARK 官网」或「自定义模型」。
 					</div>
 				</div>
 				<div class="config-item private-only" id="privateServerUrlContainer">

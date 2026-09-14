@@ -5,14 +5,13 @@
 > For detailed developer documentation, visit: [https://prodocs.lceda.cn/cn/api/guide/](https://prodocs.lceda.cn/cn/api/guide/)
 
 
-## What's New in v1.0.8
+## What's New in v1.0.9
 
-This release focuses on "connection-mode expansion, model transparency, reportable failures, and observable usage". Highlights:
+This release focuses on "client environment adaptation". Highlights:
 
-- **🔀 Third Connection Mode**: Besides the existing "Private Server" and "ARK Official" modes, the config dialog adds a "Custom Model" mode where you can fill in your own API Key / Base URL / Model (e.g. deepseek, glm and other OpenAI-compatible endpoints) and use it out of the box.
-- **🏷️ Current Model Display**: The status bar now shows a "Model" badge — in private-server mode the server returns the actual serving model, and in other modes it shows the locally configured model, so you always know which model you are using.
-- **📣 One-Click Failure Report**: When an unexpected error occurs, a "Report this issue" link appears at the end of the error bubble; it auto-collects the stack trace and submits it to the admin via the support channel. Non-private-server users are guided to register first.
-- **🎁 Claimed Info Transparency**: The user package block shows the claimed model type and remaining amount.
+- **🖥️ Private Server Mode on EDA Client**: In the JLCEDA desktop client, the "Private Server" connection mode is automatically greyed out with an explanatory note. The private server uses a self-signed certificate that the client's network layer rejects, so requests cannot reach the server. The web version is unaffected and private server mode still works there.
+- **🔄 Automatic Config Fallback**: If the saved configuration is "Private Server" on the client, the extension switches to "ARK Official" on startup and persists the change, so users never face an unusable configuration.
+- **🛡️ Dual Safeguards**: Both the config-save path and the message-send path validate the client environment and block private-server selection with a clear message.
 
 > For full history, see the "Changelog" section below and `CHANGELOG.md`.
 
@@ -33,6 +32,7 @@ AI巧绘 is an intelligent tool designed specifically for schematic designers, f
 This extension can connect to an **external private server backend** for conversations (the backend forwards requests to ARK). Clarification:
 
 - This extension only provides a "Private Server Login" jump entry. After logging in on the server page, the user obtains a Token to use in configuration.
+- Private server mode is available on the **web version** only. In the JLCEDA desktop client, the private server uses a self-signed certificate that the client's network layer rejects, so requests cannot reach the server. The "Private Server" option in the config dialog is automatically greyed out with an explanatory note. On the client, use "ARK Official" or "Custom Model" instead.
 
 ---
 
