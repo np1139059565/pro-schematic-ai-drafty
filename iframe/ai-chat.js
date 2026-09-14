@@ -45,6 +45,8 @@ let customApiKeyInput; // 自定义模式 API Key 输入框
 let customBaseUrlInput; // 自定义模式 Base URL 输入框
 let customModelInput; // 自定义模式 Model 输入框
 let arkApiKeyContainer; // API Key 配置项容器（按模式显隐）
+let privateServerUrlContainer; // 私服服务器地址配置项容器（仅私服模式显隐）
+let privateServerUrlInput; // 私服服务器地址输入框
 let customApiKeyContainer; // 自定义 API Key 配置项容器
 let customBaseUrlContainer; // 自定义 Base URL 配置项容器
 let customModelContainer; // 自定义 Model 配置项容器
@@ -288,6 +290,8 @@ function init() {
 	customApiKeyContainer = document.getElementById('customApiKeyContainer'); // 获取自定义 API Key 配置项容器
 	customBaseUrlContainer = document.getElementById('customBaseUrlContainer'); // 获取自定义 Base URL 配置项容器
 	customModelContainer = document.getElementById('customModelContainer'); // 获取自定义 Model 配置项容器
+	privateServerUrlInput = document.getElementById('privateServerUrlInput'); // 获取私服服务器地址输入框
+	privateServerUrlContainer = document.getElementById('privateServerUrlContainer'); // 获取私服服务器地址配置项容器
 	modelInfoEl = document.getElementById('modelInfo'); // 获取状态栏模型信息展示位
 	packageInfoEl = document.getElementById('packageInfo'); // 获取状态栏套餐信息展示位
 	usePrivateServerCheckbox = document.getElementById('usePrivateServerCheckbox'); // 保留引用（已不再作为主开关）
@@ -833,7 +837,7 @@ async function callAIAndHandleResponse() {
 		apiPromise =
 			getChatCaller()(
 				conversationHistory, previousResponseId, isAddTool ? collectToolDescriptions() : null,
-				window.AbortManager.createTimeoutSignal(60000)); // 调用 API(绑定 60s 超时+手动取消信号)
+				window.AbortManager.createTimeoutSignal(180000)); // 调用 API(绑定 180s 超时+手动取消信号)
 
 		// 追踪 API Promise
 		activeApiPromises.add(apiPromise); // 添加到追踪集合
@@ -1115,7 +1119,7 @@ async function continueConversationAfterTools(toolInputMessages) {
 			toolInputMessages, // 工具执行结果（作为 input 传入）
 			previousResponseId, // 上一轮响应 ID
 			null, // 无新增工具
-			window.AbortManager.createTimeoutSignal(60000) // 绑定 60s 超时+手动取消信号
+			window.AbortManager.createTimeoutSignal(180000) // 绑定 180s 超时+手动取消信号
 		); // 调用 API
 
 		// 追踪 API Promise
@@ -1713,6 +1717,7 @@ function applyModeVisibility(mode) {
 	if (customApiKeyContainer) customApiKeyContainer.style.display = showCustom ? 'block' : 'none';
 	if (customBaseUrlContainer) customBaseUrlContainer.style.display = showCustom ? 'block' : 'none';
 	if (customModelContainer) customModelContainer.style.display = showCustom ? 'block' : 'none';
+	if (privateServerUrlContainer) privateServerUrlContainer.style.display = (mode === 'private') ? 'block' : 'none'; // 仅私服模式显示服务器地址
 }
 
 /**
@@ -1744,6 +1749,7 @@ function handleConfigClick() {
 	const customKey = localStorage.getItem('custom_api_key') || ''; // 读取自定义 API Key
 	const customBaseUrl = localStorage.getItem('custom_base_url') || ''; // 读取自定义 Base URL
 	const customModel = localStorage.getItem('custom_model') || ''; // 读取自定义 Model
+	const currentPrivateServerUrl = localStorage.getItem('private_server_url') || ''; // 读取私服服务器地址
 
 	// 填充输入框
 	arkApiKeyInput.value = currentApiKey; // 设置 API Key 输入框值
@@ -1751,6 +1757,7 @@ function handleConfigClick() {
 	customApiKeyInput.value = customKey; // 设置自定义 API Key
 	customBaseUrlInput.value = customBaseUrl; // 设置自定义 Base URL
 	customModelInput.value = customModel; // 设置自定义 Model
+	privateServerUrlInput.value = currentPrivateServerUrl; // 设置私服服务器地址
 
 	// 选中对应模式 radio（仅同步界面，不触发清空）
 	const radio = document.querySelector(`input[name="connMode"][value="${mode}"]`);
@@ -1786,6 +1793,7 @@ function handleSaveConfig() {
 		const customKey = customApiKeyInput.value.trim(); // 自定义 API Key
 		const customBaseUrl = customBaseUrlInput.value.trim(); // 自定义 Base URL
 		const customModel = customModelInput.value.trim(); // 自定义 Model
+	const privateServerUrl = privateServerUrlInput.value.trim(); // 私服服务器地址
 
 		// 与已保存配置对比，检测是否真正发生修改（含模式与自定义字段）
 		const savedApiKey = localStorage.getItem('api_key') || ''; // 读取已保存的 API Key
@@ -1814,6 +1822,7 @@ function handleSaveConfig() {
 
 		// 持久化：私服开关标记（与 model 联动）+ 核心两项 + 模式与自定义字段
 		localStorage.setItem('use_private_server', String(newMode === 'private')); // 保存私服标记
+	localStorage.setItem('private_server_url', privateServerUrl); // 保存私服服务器地址
 		window.ArkAPI.updateConfig(apiKey, model); // 更新核心配置
 		window.ArkAPI.updateConnectionConfig(newMode, customKey, customBaseUrl, customModel); // 更新模式与自定义配置
 

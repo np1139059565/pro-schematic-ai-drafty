@@ -12,7 +12,6 @@ This release focuses on "connection-mode expansion, model transparency, reportab
 - **🔀 Third Connection Mode**: Besides the existing "Private Server" and "ARK Official" modes, the config dialog adds a "Custom Model" mode where you can fill in your own API Key / Base URL / Model (e.g. deepseek, glm and other OpenAI-compatible endpoints) and use it out of the box.
 - **🏷️ Current Model Display**: The status bar now shows a "Model" badge — in private-server mode the server returns the actual serving model, and in other modes it shows the locally configured model, so you always know which model you are using.
 - **📣 One-Click Failure Report**: When an unexpected error occurs, a "Report this issue" link appears at the end of the error bubble; it auto-collects the stack trace and submits it to the admin via the support channel. Non-private-server users are guided to register first.
-- **📊 Token Traffic Analysis**: Every conversation now reports its Token consumption; the admin page gains a "Token Traffic" tab with day/week/month bar charts for capacity and cost analysis.
 - **🎁 Claimed Info Transparency**: The user package block shows the claimed model type and remaining amount.
 
 > For full history, see the "Changelog" section below and `CHANGELOG.md`.
