@@ -1511,6 +1511,42 @@ function setInputDisabled(disabled) {
 }
 
 /**
+ * 复制文本到系统剪贴板
+ * 优先使用 Clipboard API;EDA 宿主 iframe 中可能因权限/安全上下文不可用,
+ * 自动降级为隐藏 textarea + execCommand('copy') 兜底方案
+ * @param {string} text - 待复制的纯文本
+ * @returns {Promise<boolean>} 是否复制成功
+ */
+async function copyTextToClipboard(text) {
+	// 路径一:Clipboard API(需安全上下文与剪贴板权限)
+	try {
+		if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+			await navigator.clipboard.writeText(text);
+			return true;
+		}
+	} catch (error) {
+		console.warn('Clipboard API 复制失败,降级 execCommand:', error); // 继续走兜底
+	}
+	// 路径二:临时 textarea + execCommand 兜底
+	try {
+		const textarea = document.createElement('textarea'); // 创建临时文本域
+		textarea.value = text; // 待复制内容
+		textarea.style.position = 'fixed'; // 固定到视口外,避免页面闪烁与滚动
+		textarea.style.left = '-9999px';
+		textarea.style.opacity = '0';
+		document.body.appendChild(textarea);
+		textarea.select(); // 选中内容
+		const ok = document.execCommand('copy'); // 执行复制
+		textarea.remove(); // 移除临时节点
+		if (!ok) console.error('execCommand copy 返回 false');
+		return ok;
+	} catch (error) {
+		console.error('复制到剪贴板失败:', error); // 输出错误日志
+		return false;
+	}
+}
+
+/**
  * 添加消息到对话界面
  * @param role - 消息角色 ('user' 或 'assistant')
  * @param content - 消息内容
@@ -1533,11 +1569,41 @@ function addMessageToChat(role, content, isError = false) {
 		contentDiv.style.border = '1px solid #fcc'; // 设置错误边框
 	}
 
-	// 直接显示文本内容（不再解析代码块，因为现在使用 Function Calling）
+	// 消息文本渲染:用户输入保持纯文本(pre-wrap 保留换行);
+	// AI 回复与错误提示按 markdown 渲染(escape-first 防注入,由 markdown-renderer.js 提供)
 	const textDiv = document.createElement('div'); // 创建文本容器
 	textDiv.className = 'message-text'; // 设置文本类名
-	textDiv.textContent = content; // 设置文本内容
+	if (role === 'user') {
+		textDiv.textContent = content; // 用户输入保持纯文本展示
+	} else {
+		textDiv.classList.add('markdown-body'); // 挂 markdown 样式作用域
+		textDiv.innerHTML = window.MarkdownRenderer.render(content || ''); // 渲染为安全 HTML
+	}
 	contentDiv.appendChild(textDiv); // 添加到内容容器
+
+	// AI 回复消息追加复制按钮(复制的是 markdown 原始纯文本,而非渲染后的 HTML)
+	if (role === 'assistant') {
+		const copyBtn = document.createElement('button'); // 创建复制按钮
+		copyBtn.className = 'copy-reply-btn'; // 挂样式类(hover 显示于气泡右上角)
+		copyBtn.title = '复制回复内容'; // 悬停提示
+		copyBtn.type = 'button'; // 避免触发表单默认行为
+		// 内联 SVG 复制图标(描边跟随 currentColor,适配气泡配色)
+		copyBtn.innerHTML =
+			'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+			'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+			'<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>' +
+			'<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+		copyBtn.addEventListener('click', async () => {
+			const ok = await copyTextToClipboard(content || ''); // 复制原始纯文本内容
+			copyBtn.classList.add(ok ? 'copied' : 'copy-failed'); // 图标反馈:成功绿/失败红
+			copyBtn.title = ok ? '已复制' : '复制失败'; // 悬停提示同步状态
+			setTimeout(() => {
+				copyBtn.classList.remove('copied', 'copy-failed'); // 1.5s 后恢复图标原状
+				copyBtn.title = '复制回复内容';
+			}, 1500);
+		});
+		contentDiv.appendChild(copyBtn); // 添加到内容容器右上角
+	}
 
 	// 组装消息元素
 	messageDiv.appendChild(contentDiv); // 将内容添加到消息容器
@@ -1545,6 +1611,7 @@ function addMessageToChat(role, content, isError = false) {
 
 	// 滚动到底部
 	// scrollToBottom(); // 滚动到消息底部
+	return messageDiv; // 供调用方(如结构化错误提示追加操作链接)继续扩展
 }
 
 /**

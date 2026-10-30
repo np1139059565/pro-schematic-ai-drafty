@@ -15,3 +15,4 @@ debug.log
 /*.7z
 /*.zip
 /server_stdout.log
+/Attachment/*

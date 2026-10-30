@@ -95,9 +95,15 @@ body {
 }
 
 @keyframes config-btn-pulse {
-	0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.6); }
-	70% { box-shadow: 0 0 0 8px rgba(231, 76, 60, 0); }
-	100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+	0% {
+		box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.6);
+	}
+	70% {
+		box-shadow: 0 0 0 8px rgba(231, 76, 60, 0);
+	}
+	100% {
+		box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
+	}
 }
 
 /* 配置对话框样式 */
@@ -261,7 +267,6 @@ body {
 	color: #874d00;
 }
 
-
 .config-input {
 	width: 100%;
 	padding: 10px 12px;
@@ -402,6 +407,58 @@ body {
 	border: 1px solid #e0e0e0;
 	border-bottom-left-radius: 4px;
 	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+	position: relative; /* 作为复制按钮的定位锚点 */
+}
+
+/* AI 回复复制按钮:hover 显示于气泡右上角 */
+.copy-reply-btn {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	width: 24px;
+	height: 24px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	border-radius: 5px;
+	background: rgba(0, 0, 0, 0.04);
+	color: #888;
+	cursor: pointer;
+	opacity: 0; /* 默认隐藏,悬停气泡时显现 */
+	transition:
+		opacity 0.15s ease,
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.message-content:hover .copy-reply-btn {
+	opacity: 0.65; /* 悬停消息气泡时半显 */
+}
+
+.copy-reply-btn:hover {
+	opacity: 1; /* 悬停按钮时全显 */
+	background: rgba(0, 0, 0, 0.08);
+	color: #555;
+}
+
+.copy-reply-btn.copied {
+	opacity: 1; /* 复制成功:常显绿色 */
+	color: #2a9d4a;
+	background: rgba(42, 157, 74, 0.1);
+}
+
+.copy-reply-btn.copy-failed {
+	opacity: 1; /* 复制失败:常显红色 */
+	color: #c33;
+	background: rgba(204, 51, 51, 0.1);
+}
+
+/* 错误消息气泡(红底)上的复制按钮配色适配 */
+.message-content[style*='background: #fee'] .copy-reply-btn {
+	background: rgba(0, 0, 0, 0.05);
+	color: #b55;
 }
 
 /* 加载动画 */
@@ -567,6 +624,150 @@ body {
 	line-height: 1.6;
 }
 
+/* ==================== Markdown 渲染样式(markdown-renderer.js 输出) ==================== */
+/* 覆盖 .message-text 的 pre-wrap:块级间距由元素自身 margin 控制,避免出现双重换行 */
+.markdown-body {
+	white-space: normal;
+	word-break: break-word;
+}
+
+.markdown-body .md-p {
+	margin: 0 0 8px;
+}
+
+.markdown-body .md-p:last-child {
+	margin-bottom: 0;
+}
+
+.markdown-body .md-h {
+	margin: 10px 0 6px;
+	font-weight: 600;
+	line-height: 1.4;
+}
+
+.markdown-body h1.md-h {
+	font-size: 1.35em;
+	border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+	padding-bottom: 4px;
+}
+
+.markdown-body h2.md-h {
+	font-size: 1.2em;
+}
+
+.markdown-body h3.md-h {
+	font-size: 1.1em;
+}
+
+.markdown-body h4.md-h,
+.markdown-body h5.md-h,
+.markdown-body h6.md-h {
+	font-size: 1em;
+}
+
+.markdown-body .md-strong {
+	font-weight: 600;
+}
+
+.markdown-body .md-em {
+	font-style: italic;
+}
+
+.markdown-body .md-del {
+	opacity: 0.65;
+}
+
+.markdown-body .md-link {
+	color: #1a73e8;
+	text-decoration: underline;
+	word-break: break-all;
+}
+
+.markdown-body .md-code {
+	font-family: 'Consolas', 'Monaco', monospace;
+	font-size: 0.92em;
+	background: rgba(128, 128, 128, 0.15);
+	border-radius: 3px;
+	padding: 1px 5px;
+}
+
+.markdown-body .md-pre-wrap {
+	margin: 8px 0;
+	background: #282c34;
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.markdown-body .md-code-lang {
+	display: block;
+	padding: 5px 10px 0;
+	color: #8ab4f8;
+	font-size: 11px;
+	font-family: 'Consolas', monospace;
+}
+
+.markdown-body .md-pre {
+	margin: 0;
+	padding: 8px 10px 10px;
+	overflow-x: auto;
+}
+
+.markdown-body .md-pre code {
+	font-family: 'Consolas', 'Monaco', monospace;
+	font-size: 12.5px;
+	color: #e8eaed;
+	white-space: pre;
+	line-height: 1.55;
+}
+
+.markdown-body .md-quote {
+	margin: 8px 0;
+	padding: 6px 12px;
+	border-left: 3px solid rgba(128, 128, 128, 0.4);
+	background: rgba(128, 128, 128, 0.08);
+	border-radius: 0 4px 4px 0;
+}
+
+.markdown-body .md-list {
+	margin: 6px 0;
+	padding-left: 22px;
+}
+
+.markdown-body .md-list.md-sub {
+	margin: 2px 0;
+}
+
+.markdown-body .md-list li {
+	margin: 3px 0;
+}
+
+.markdown-body .md-table {
+	border-collapse: collapse;
+	margin: 8px 0;
+	font-size: 0.95em;
+	display: block;
+	overflow-x: auto;
+	max-width: 100%;
+}
+
+.markdown-body .md-table th,
+.markdown-body .md-table td {
+	border: 1px solid rgba(128, 128, 128, 0.35);
+	padding: 5px 10px;
+	text-align: left;
+}
+
+.markdown-body .md-table th {
+	background: rgba(128, 128, 128, 0.12);
+	font-weight: 600;
+}
+
+.markdown-body .md-hr {
+	border: none;
+	border-top: 1px solid rgba(128, 128, 128, 0.3);
+	margin: 10px 0;
+}
+
 .code-block-container {
 	margin: 12px 0;
 	border: 1px solid #e0e0e0;
@@ -689,11 +890,11 @@ body {
 	border-left: 3px solid #667eea;
 }
 
-[data-dialog-tagitem="lc_modal_dialog__body"]{
-	max-height:none !important;
+[data-dialog-tagitem='lc_modal_dialog__body'] {
+	max-height: none !important;
 }
-#messageInput{
-	height:auto !important;
+#messageInput {
+	height: auto !important;
 }
 
 /* ==================== 数据管理抽屉样式（dm- 前缀） ==================== */
@@ -1180,7 +1381,7 @@ body {
 /* ==================== JSON 折叠树(日志请求/响应快照) ==================== */
 /* 外层容器:等宽字体 + 保留代码观感 */
 .dm-json-tree {
-	font-family: Consolas, "Courier New", monospace;
+	font-family: Consolas, 'Courier New', monospace;
 	font-size: 12px;
 	line-height: 1.6;
 }
@@ -1258,10 +1459,21 @@ body {
 }
 
 /* JSON 各类型着色 */
-.dm-json-key { color: #b5651d; }   /* 键名 */
-.dm-json-str { color: #2a7d2a; white-space: pre-wrap; word-break: break-all; }   /* 字符串值:内部换行由 CSS 自动折行,保留缩进观感 */
-.dm-json-num { color: #1f6feb; }   /* 数字 / 布尔 */
-.dm-json-null { color: #999; font-style: italic; } /* null */
+.dm-json-key {
+	color: #b5651d;
+} /* 键名 */
+.dm-json-str {
+	color: #2a7d2a;
+	white-space: pre-wrap;
+	word-break: break-all;
+} /* 字符串值:内部换行由 CSS 自动折行,保留缩进观感 */
+.dm-json-num {
+	color: #1f6feb;
+} /* 数字 / 布尔 */
+.dm-json-null {
+	color: #999;
+	font-style: italic;
+} /* null */
 
 /* ==================== 日志折叠面板（list + detail 两栏） ==================== */
 
@@ -1442,7 +1654,9 @@ body {
 
 /* 连线：默认态 */
 .dm-graph-link {
-	transition: opacity 0.2s, stroke-width 0.2s;
+	transition:
+		opacity 0.2s,
+		stroke-width 0.2s;
 }
 /* 命中高亮 / 淡出（搜索链路） */
 .dm-graph-node.dim,
@@ -1593,7 +1807,8 @@ body {
 	border-top: 1px solid rgba(255, 255, 255, 0.12);
 	padding-top: 4px;
 }
-.dm-graph-tt-desc code, .dm-graph-tt-row code {
+.dm-graph-tt-desc code,
+.dm-graph-tt-row code {
 	background: rgba(255, 255, 255, 0.12);
 	padding: 0 3px;
 	border-radius: 3px;
