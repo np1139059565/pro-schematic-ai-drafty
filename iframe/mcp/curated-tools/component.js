@@ -28,9 +28,15 @@ async function getCanvasSize() {
 		const footprintSourceStr = await eda.sys_FileManager.getDocumentSource();
 		if (footprintSourceStr && footprintSourceStr.includes('Width') && footprintSourceStr.includes('Height')) {
 			// 按行解析文档源码(合并二维数组)
-			const parts = footprintSourceStr.split('\n').map(line =>
-				line.trim().split('|').filter(p => p.trim().length > 0)
-			).flat();
+			const parts = footprintSourceStr
+				.split('\n')
+				.map((line) =>
+					line
+						.trim()
+						.split('|')
+						.filter((p) => p.trim().length > 0),
+				)
+				.flat();
 
 			for (const part of parts) {
 				// 解析每个JSON对象（包含type、ticket、id等信息）
@@ -58,9 +64,9 @@ async function getCanvasSize() {
 	}
 	return {
 		content: {
-			width: { type: "number", value: canvasWidth },
-			height: { type: "number", value: canvasHeight }
-		}
+			width: { type: 'number', value: canvasWidth },
+			height: { type: 'number', value: canvasHeight },
+		},
 	};
 }
 
@@ -138,7 +144,17 @@ const SCH_PRIMITIVE_COMPONENT_CREATE_SCHEMA = {
 	domain: 'component_design',
 };
 
-async function sch_PrimitiveComponent$create({ uuid, libraryUuid, x, y, subPartName = '', rotation = 0, mirror = false, addIntoBom = true, addIntoPcb = true }) {
+async function sch_PrimitiveComponent$create({
+	uuid,
+	libraryUuid,
+	x,
+	y,
+	subPartName = '',
+	rotation = 0,
+	mirror = false,
+	addIntoBom = true,
+	addIntoPcb = true,
+}) {
 	if (!uuid || !libraryUuid) {
 		throw new Error('uuid 与 libraryUuid 必填且不可为空');
 	}
@@ -149,16 +165,17 @@ async function sch_PrimitiveComponent$create({ uuid, libraryUuid, x, y, subPartN
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
 	assertInCanvas(x, y, canvasWidth, canvasHeight);
-	const comp = await eda.sch_PrimitiveComponent.create(
-		{ uuid, libraryUuid },
-		x,
-		y,
-		subPartName,
-		rotation,
-		mirror,
-		addIntoBom,
-		addIntoPcb,
-	);
+	const comp = await eda.sch_PrimitiveComponent.create({ uuid, libraryUuid }, x, y, subPartName, rotation, mirror, addIntoBom, addIntoPcb);
+	// 宿主 create 仅在内存创建实例,必须 await done() 提交后元件才会真正绘制到画布;
+	// 缺少提交会导致工具报成功但画布无变化(AI执行后不画图)。
+	// 依据项目资源文档 resource_jlc_sch_primitive: create→...→done 提交(必须 await)。
+	if (!comp) {
+		// 宿主在画布未激活/参数被内部校验拒绝时可能返回空包装且不抛异常(fire-and-forget)
+		throw new Error('宿主未返回元件实例,放置被拒绝(请确认当前打开的是原理图页面、uuid/libraryUuid 有效后重试)');
+	}
+	if (typeof comp.done === 'function') {
+		await comp.done(); // 提交绘制
+	}
 	return { content: comp };
 }
 
@@ -190,8 +207,8 @@ const SCH_PRIMITIVE_COMPONENT_CREATE_BATCH_SCHEMA = {
 						addIntoBom: { type: 'boolean', description: '是否加入 BOM' },
 						addIntoPcb: { type: 'boolean', description: '是否同步到 PCB' },
 					},
-					required: ['uuid', 'libraryUuid', 'x', 'y']
-				}
+					required: ['uuid', 'libraryUuid', 'x', 'y'],
+				},
 			},
 		},
 		required: ['components'],
@@ -232,14 +249,11 @@ const SCH_PRIMITIVE_COMPONENT_DELETE_SCHEMA = {
 		type: 'object',
 		properties: {
 			primitiveIds: {
-				oneOf: [
-					{ type: 'string' },
-					{ type: 'array', items: { type: 'string' } }
-				],
-				description: '器件的图元 ID 或器件图元对象,可以是单个ID或ID数组'
-			}
+				oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+				description: '器件的图元 ID 或器件图元对象,可以是单个ID或ID数组',
+			},
 		},
-		required: ['primitiveIds']
+		required: ['primitiveIds'],
 	},
 	semantic_tags: ['元件', '删除'],
 	source: 'curated',
@@ -306,7 +320,7 @@ async function sch_PrimitiveComponent$getAllPinsByPrimitiveId({ primitiveId, inv
 	}
 	const pins = await eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(primitiveId);
 	if (invertY) {
-		return { content: pins.map(p => ({ ...p, y: -p.y })) };
+		return { content: pins.map((p) => ({ ...p, y: -p.y })) };
 	}
 	return { content: pins };
 }
@@ -326,7 +340,7 @@ const SCH_PRIMITIVE_COMPONENT_GET_PINS_BATCH_SCHEMA = {
 			primitiveIds: {
 				type: 'array',
 				description: '元件图元 ID 数组(必填)',
-				items: { type: 'string' }
+				items: { type: 'string' },
 			},
 			invertY: { type: 'boolean', description: '是否 y 轴取反,默认 true' },
 		},
@@ -363,11 +377,12 @@ const SCH_PRIMITIVE_COMPONENT_MODIFY_SCHEMA = {
 		properties: {
 			primitiveId: {
 				type: 'string',
-				description: '元件图元 ID(必填)'
+				description: '元件图元 ID(必填)',
 			},
 			property: {
 				type: 'object',
-				description: '需要修改的参数对象,支持：x?:number, y?:number, rotation?:number, mirror?:boolean, addIntoBom?:boolean, addIntoPcb?:boolean, designator?:string|null, name?:string|null, uniqueId?:string|null, manufacturer?:string|null, manufacturerId?:string|null, supplier?:string|null, supplierId?:string|null, otherProperty?:{[key:string]:string|number|boolean}',
+				description:
+					'需要修改的参数对象,支持：x?:number, y?:number, rotation?:number, mirror?:boolean, addIntoBom?:boolean, addIntoPcb?:boolean, designator?:string|null, name?:string|null, uniqueId?:string|null, manufacturer?:string|null, manufacturerId?:string|null, supplier?:string|null, supplierId?:string|null, otherProperty?:{[key:string]:string|number|boolean}',
 				properties: {
 					x: { type: 'number' },
 					y: { type: 'number' },
@@ -382,11 +397,11 @@ const SCH_PRIMITIVE_COMPONENT_MODIFY_SCHEMA = {
 					manufacturerId: { type: ['string', 'null'] },
 					supplier: { type: ['string', 'null'] },
 					supplierId: { type: ['string', 'null'] },
-					otherProperty: { type: 'object' }
-				}
-			}
+					otherProperty: { type: 'object' },
+				},
+			},
 		},
-		required: ['primitiveId', 'property']
+		required: ['primitiveId', 'property'],
 	},
 	semantic_tags: ['元件', '修改', '属性'],
 	source: 'curated',
@@ -403,7 +418,7 @@ async function sch_PrimitiveComponent$modify({ primitiveId, property }) {
 	const canvasSize = await window.curatedTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
-	if(property.x < 0 || property.x > canvasWidth || property.y < 0 || property.y > canvasHeight) {
+	if (property.x < 0 || property.x > canvasWidth || property.y < 0 || property.y > canvasHeight) {
 		throw new Error('x,y不能超过画布边界');
 	}
 	const comp = await eda.sch_PrimitiveComponent.modify(primitiveId, property);
@@ -430,10 +445,10 @@ const SCH_PRIMITIVE_POLYGON_CREATE_SCHEMA = {
 			lineType: {
 				type: 'number',
 				enum: [0, 1, 2, 3],
-				description: '线型,0:实线,1:虚线,2:点划线,3:点线'
-			}
+				description: '线型,0:实线,1:虚线,2:点划线,3:点线',
+			},
 		},
-		required: ['line']
+		required: ['line'],
 	},
 	semantic_tags: ['多边形', '边界', '绘制', 'lineType'],
 	source: 'curated',
@@ -442,14 +457,19 @@ const SCH_PRIMITIVE_POLYGON_CREATE_SCHEMA = {
 
 async function sch_PrimitivePolygon$create({ line, color = null, fillColor = null, lineWidth = null, lineType = null }) {
 	// line 必须为长度不少于8且为偶数的坐标数组（至少4点且必须闭合,首尾点必须相同）
-	if (!Array.isArray(line) || line.length < 8 || line.length % 2 !== 0 || `${line[0]}${line[1]}` !== `${line[line.length - 2]}${line[line.length - 1]}`) {
+	if (
+		!Array.isArray(line) ||
+		line.length < 8 ||
+		line.length % 2 !== 0 ||
+		`${line[0]}${line[1]}` !== `${line[line.length - 2]}${line[line.length - 1]}`
+	) {
 		throw new Error('line 必须是长度不少于8且为偶数的坐标数组,至少包含4点且必须闭合');
 	}
 	const canvasSize = await window.curatedTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
-	for(let i = 0; i < line.length; i += 2) {
-		if(line[i] < 0 || line[i] > canvasWidth || line[i + 1] < 0 || line[i + 1] > canvasHeight) {
+	for (let i = 0; i < line.length; i += 2) {
+		if (line[i] < 0 || line[i] > canvasWidth || line[i + 1] < 0 || line[i + 1] > canvasHeight) {
 			throw new Error('line中的x,y不能超过画布边界');
 		}
 	}
@@ -488,11 +508,11 @@ const SCH_PRIMITIVE_POLYGON_CREATE_BATCH_SCHEMA = {
 						lineType: {
 							type: 'number',
 							enum: [0, 1, 2, 3],
-							description: '线型,0:实线,1:虚线,2:点划线,3:点线'
-						}
+							description: '线型,0:实线,1:虚线,2:点划线,3:点线',
+						},
 					},
-					required: ['line']
-				}
+					required: ['line'],
+				},
 			},
 		},
 		required: ['boundsList'],
@@ -529,14 +549,11 @@ const SCH_PRIMITIVE_POLYGON_DELETE_SCHEMA = {
 		type: 'object',
 		properties: {
 			primitiveIds: {
-				oneOf: [
-					{ type: 'string' },
-					{ type: 'array', items: { type: 'string' } }
-				],
-				description: '多边形的图元 ID 或多边形图元对象,可以是单个ID或ID数组'
-			}
+				oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+				description: '多边形的图元 ID 或多边形图元对象,可以是单个ID或ID数组',
+			},
 		},
-		required: ['primitiveIds']
+		required: ['primitiveIds'],
 	},
 	semantic_tags: ['多边形', '删除'],
 	source: 'curated',
@@ -564,7 +581,7 @@ const SCH_PRIMITIVE_POLYGON_GET_ALL_SCHEMA = {
 	inputSchema: {
 		type: 'object',
 		properties: {},
-		required: []
+		required: [],
 	},
 	semantic_tags: ['多边形', '列表'],
 	source: 'curated',
@@ -621,14 +638,14 @@ const CALCULATE_COMPONENT_BOUNDS_SCHEMA = {
 					type: 'object',
 					properties: {
 						x: { type: 'number', description: '引脚 X 坐标' },
-						y: { type: 'number', description: '引脚 Y 坐标' }
+						y: { type: 'number', description: '引脚 Y 坐标' },
 					},
-					required: ['x', 'y']
-				}
+					required: ['x', 'y'],
+				},
 			},
-			expandMil: { type: 'number', description: '引脚膨胀距离,默认 10mil' }
+			expandMil: { type: 'number', description: '引脚膨胀距离,默认 10mil' },
 		},
-		required: ['pins']
+		required: ['pins'],
 	},
 	semantic_tags: ['边界', '碰撞', '引脚', '矩形'],
 	source: 'curated',
@@ -661,13 +678,13 @@ const CALCULATE_COMPONENT_BOUNDS_BATCH_SCHEMA = {
 					items: {
 						type: 'object',
 						properties: { x: { type: 'number', description: '引脚 X 坐标' }, y: { type: 'number', description: '引脚 Y 坐标' } },
-						required: ['x', 'y']
-					}
-				}
+						required: ['x', 'y'],
+					},
+				},
 			},
-			expandMil: { type: 'number', description: '引脚膨胀距离,默认 10mil' }
+			expandMil: { type: 'number', description: '引脚膨胀距离,默认 10mil' },
 		},
-		required: ['pinsList']
+		required: ['pinsList'],
 	},
 	semantic_tags: ['边界', '批量', '碰撞', '矩形'],
 	source: 'curated',
@@ -679,6 +696,6 @@ async function calculateComponentBoundsBatch({ pinsList, expandMil = 10 }) {
 	if (!Array.isArray(pinsList) || pinsList.length === 0) {
 		return { content: [] };
 	}
-	const results = pinsList.map(pins => computeBounds(pins, expandMil));
+	const results = pinsList.map((pins) => computeBounds(pins, expandMil));
 	return { content: results };
 }

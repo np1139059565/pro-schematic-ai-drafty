@@ -37,10 +37,18 @@ async function sch_PrimitiveWire$create({ line, net = null, color = '#000000', l
 	const canvasSize = await window.curatedTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
-	for(let i = 0; i < line.length; i += 2) {
+	for (let i = 0; i < line.length; i += 2) {
 		assertInCanvas(line[i], line[i + 1], canvasWidth, canvasHeight);
 	}
 	const wire = await eda.sch_PrimitiveWire.create(line, net, color, lineWidth, lineType);
+	// 与元件创建同理:宿主 create 仅在内存创建实例,必须 await done() 提交后导线才会真正绘制;
+	// 缺少提交会导致工具报成功但画布无变化(AI执行后不画图)
+	if (!wire) {
+		throw new Error('宿主未返回导线实例,创建被拒绝(请确认当前打开的是原理图页面后重试)');
+	}
+	if (typeof wire.done === 'function') {
+		await wire.done(); // 提交绘制
+	}
 	return { content: wire };
 }
 
@@ -68,8 +76,8 @@ const SCH_PRIMITIVE_WIRE_CREATE_BATCH_SCHEMA = {
 						lineWidth: { type: 'number', description: '线宽' },
 						lineType: { type: 'number', description: '线型' },
 					},
-					required: ['line']
-				}
+					required: ['line'],
+				},
 			},
 		},
 		required: ['wires'],
@@ -106,14 +114,11 @@ const SCH_PRIMITIVE_WIRE_DELETE_SCHEMA = {
 		type: 'object',
 		properties: {
 			primitiveIds: {
-				oneOf: [
-					{ type: 'string' },
-					{ type: 'array', items: { type: 'string' } }
-				],
-				description: '导线的图元 ID 或导线图元对象,可以是单个ID或ID数组'
-			}
+				oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+				description: '导线的图元 ID 或导线图元对象,可以是单个ID或ID数组',
+			},
 		},
-		required: ['primitiveIds']
+		required: ['primitiveIds'],
 	},
 	semantic_tags: ['导线', '删除'],
 	source: 'curated',
@@ -140,14 +145,11 @@ const SCH_PRIMITIVE_WIRE_GET_ALL_SCHEMA = {
 		type: 'object',
 		properties: {
 			net: {
-				oneOf: [
-					{ type: 'string' },
-					{ type: 'array', items: { type: 'string' } }
-				],
-				description: '网络名称,可选,用于筛选特定网络的导线'
-			}
+				oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+				description: '网络名称,可选,用于筛选特定网络的导线',
+			},
 		},
-		required: []
+		required: [],
 	},
 	semantic_tags: ['导线', '列表', '查询', '网络'],
 	source: 'curated',
@@ -173,26 +175,27 @@ const SCH_PRIMITIVE_WIRE_MODIFY_SCHEMA = {
 		properties: {
 			primitiveId: {
 				type: 'string',
-				description: '导线图元 ID(必填)'
+				description: '导线图元 ID(必填)',
 			},
 			property: {
 				type: 'object',
-				description: '修改参数对象,支持：line?:Array<number>|Array<Array<number>>, net?:string, color?:string|null, lineWidth?:number|null, lineType?:ESCH_PrimitiveLineType|null',
+				description:
+					'修改参数对象,支持：line?:Array<number>|Array<Array<number>>, net?:string, color?:string|null, lineWidth?:number|null, lineType?:ESCH_PrimitiveLineType|null',
 				properties: {
 					line: {
 						oneOf: [
 							{ type: 'array', items: { type: 'number' } },
-							{ type: 'array', items: { type: 'array', items: { type: 'number' } } }
-						]
+							{ type: 'array', items: { type: 'array', items: { type: 'number' } } },
+						],
 					},
 					net: { type: 'string' },
 					color: { type: ['string', 'null'] },
 					lineWidth: { type: ['number', 'null'] },
-					lineType: { type: ['number', 'null'] }
-				}
-			}
+					lineType: { type: ['number', 'null'] },
+				},
+			},
 		},
-		required: ['primitiveId', 'property']
+		required: ['primitiveId', 'property'],
 	},
 	semantic_tags: ['导线', '修改', '属性'],
 	source: 'curated',
@@ -209,7 +212,7 @@ async function sch_PrimitiveWire$modify({ primitiveId, property }) {
 	const canvasSize = await window.curatedTools.getCanvasSize();
 	const canvasWidth = canvasSize.content.width.value;
 	const canvasHeight = canvasSize.content.height.value;
-	for(let i = 0; i < property.line.length; i += 2) {
+	for (let i = 0; i < property.line.length; i += 2) {
 		assertInCanvas(property.line[i], property.line[i + 1], canvasWidth, canvasHeight);
 	}
 	const wire = await eda.sch_PrimitiveWire.modify(primitiveId, property);

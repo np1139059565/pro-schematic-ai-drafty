@@ -77,45 +77,57 @@
 			else if (target === 'edaApi') result.edaApi = value;
 			else if (target === 'mcpDesc') result.mcpToolDescriptions = value;
 			else if (target === 'customDesc') result.customToolDescriptions = value;
-		else if (target === 'mcpFn') { result.mcpFunctions = result.mcpFunctions || {}; result.mcpFunctions[key] = value; }
-		else if (target === 'customFn') { result.customFunctions = result.customFunctions || {}; result.customFunctions[key] = value; }
+			else if (target === 'mcpFn') {
+				result.mcpFunctions = result.mcpFunctions || {};
+				result.mcpFunctions[key] = value;
+			} else if (target === 'customFn') {
+				result.customFunctions = result.customFunctions || {};
+				result.customFunctions[key] = value;
+			}
 		};
 		// 用 Proxy 构造可层层拦截的 window/mcpProtocol/curatedTools
-		const makeProxy = (kind, keyName) => new Proxy({}, {
-			get(_t, prop) {
-				// 继续向下代理,支持 window.mcpProtocol.metaToolSchemas
-				return makeProxy(kind, prop);
+		const makeProxy = (kind, keyName) =>
+			new Proxy(
+				{},
+				{
+					get(_t, prop) {
+						// 继续向下代理,支持 window.mcpProtocol.metaToolSchemas
+						return makeProxy(kind, prop);
+					},
+					set(_t, prop, value) {
+						capture(kind, prop, value);
+						return true;
+					},
+					apply(_t, _this, args) {
+						// 处理函数形式的导出:window.mcpProtocol[name] = (fn)
+						capture(kind, keyName, args[0]);
+						return undefined;
+					},
+				},
+			);
+		const sandboxWindow = new Proxy(
+			{},
+			{
+				get(_t, prop) {
+					if (prop === 'promptList') return makeProxy('promptList');
+					if (prop === 'edaApi') return makeProxy('edaApi');
+					if (prop === 'mcpProtocol') return makeProxy('mcpDesc');
+					if (prop === 'curatedTools') return makeProxy('customDesc');
+					return undefined;
+				},
+				set(_t, prop, value) {
+					if (prop === 'promptList') result.promptList = value;
+					else if (prop === 'edaApi') result.edaApi = value;
+					else if (prop === 'resourceList') result.resourceList = value;
+					captureStandalone(prop, value);
+					return true;
+				},
 			},
-			set(_t, prop, value) {
-				capture(kind, prop, value);
-				return true;
-			},
-			apply(_t, _this, args) {
-				// 处理函数形式的导出:window.mcpProtocol[name] = (fn)
-				capture(kind, keyName, args[0]);
-				return undefined;
-			}
-		});
-		const sandboxWindow = new Proxy({}, {
-			get(_t, prop) {
-				if (prop === 'promptList') return makeProxy('promptList');
-				if (prop === 'edaApi') return makeProxy('edaApi');
-			if (prop === 'mcpProtocol') return makeProxy('mcpDesc');
-			if (prop === 'curatedTools') return makeProxy('customDesc');
-				return undefined;
-			},
-			set(_t, prop, value) {
-				if (prop === 'promptList') result.promptList = value;
-				else if (prop === 'edaApi') result.edaApi = value;
-				else if (prop === 'resourceList') result.resourceList = value;
-				captureStandalone(prop, value);
-				return true;
-			}
-		});
+		);
 		// 兼容 window.mcpProtocol[name] = (fn) 中 name 为动态键的写法
 		function captureStandalone(prop, value) {
-		if (prop === 'mcpProtocol') result._mcpProxy = makeProxy('mcpDesc');
-		if (prop === 'curatedTools') result._customProxy = makeProxy('customDesc');
+			if (prop === 'mcpProtocol') result._mcpProxy = makeProxy('mcpDesc');
+			if (prop === 'curatedTools') result._customProxy = makeProxy('customDesc');
 		}
 		// 执行源码(严格模式避免静默失败),仅用于读取赋值,不关心返回值
 		try {
@@ -134,35 +146,35 @@
 	 */
 	function buildRowsFromSource(promptList, jdbList, mcpDescList, customDescList, mcpFns, customFns, resourceList) {
 		const time = nowISO();
-		const prompts = (promptList || []).map(p => ({
+		const prompts = (promptList || []).map((p) => ({
 			name: p.name,
 			description: p.description || '',
 			messages: typeof p.messages === 'string' ? p.messages : JSON.stringify(p.messages || []),
 			category: p.category || p.name.split('_')[0],
 			is_modified: false,
-			updated_at: time
+			updated_at: time,
 		}));
 		const tools = [];
 		const pushTool = (list, source, fnMap) => {
-			for (const t of (list || [])) {
-				const impl = (fnMap && fnMap[t.name]) ? fnMap[t.name].toString() : null;
+			for (const t of list || []) {
+				const impl = fnMap && fnMap[t.name] ? fnMap[t.name].toString() : null;
 				tools.push({
 					name: t.name,
 					description: t.description || '',
 					input_schema: JSON.stringify(t.inputSchema || t.input_schema || {}),
 					impl_code: impl,
 					domain: t.domain ?? null,
-				source,
-				enabled: true,
+					source,
+					enabled: true,
 					is_modified: false,
-					updated_at: time
+					updated_at: time,
 				});
 			}
 		};
 		pushTool(jdbList, 'jdb', null);
 		pushTool(mcpDescList, 'meta', mcpFns);
 		pushTool(customDescList, 'curated', customFns);
-		const resources = (resourceList && resourceList.length) ? resourceList : buildFactoryResourceRows();
+		const resources = resourceList && resourceList.length ? resourceList : buildFactoryResourceRows();
 		return { prompts, tools, resources };
 	}
 
@@ -181,7 +193,7 @@
 		/** 出厂精选工具函数体映射 */
 		customFunctions: collectFunctions(window.curatedTools),
 		/** 出厂资源列表(mcp/resources.js 定义的 window.resourceList,内置海量嘉立创原理图资料集) */
-		resourceList: window.resourceList || []
+		resourceList: window.resourceList || [],
 	};
 
 	// ==================== 模块内部状态 ====================
@@ -213,8 +225,9 @@
 	function nowISO() {
 		const d = new Date();
 		const pad = (n) => String(n).padStart(2, '0');
-		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-			+ `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+		return (
+			`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` + `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+		);
 	}
 
 	/** 根据提示词名称推断分类(用于抽屉界面分组展示)
@@ -256,7 +269,7 @@
 		try {
 			if (typeof indexedDB.databases === 'function') {
 				const dbs = await indexedDB.databases();
-				return dbs.some(db => db.name === DB_NAME);
+				return dbs.some((db) => db.name === DB_NAME);
 			}
 		} catch (error) {
 			console.warn('[data-store] indexedDB.databases() 检测失败,回退 localStorage 标记:', error);
@@ -299,7 +312,9 @@
 		await sql(`USE ${DB_NAME}`);
 		// 日志表:仅创建不删除(历史不被 import/export/reset 影响),幂等
 		await sql(`CREATE TABLE IF NOT EXISTS chat_sessions (session_id STRING, title STRING, created_at STRING, updated_at STRING)`);
-		await sql(`CREATE TABLE IF NOT EXISTS chat_logs (log_id STRING, session_id STRING, turn NUMBER, request_payload STRING, response_payload STRING, prompt_snapshot STRING, tool_snapshot STRING, created_at STRING)`);
+		await sql(
+			`CREATE TABLE IF NOT EXISTS chat_logs (log_id STRING, session_id STRING, turn NUMBER, request_payload STRING, response_payload STRING, prompt_snapshot STRING, tool_snapshot STRING, created_at STRING)`,
+		);
 		attached = true;
 	}
 
@@ -338,7 +353,7 @@
 		await ensureAttached();
 		await overwriteTable('meta', [
 			{ key: 'seed_version', value: version },
-			{ key: 'factory_version', value: FACTORY_VERSION }
+			{ key: 'factory_version', value: FACTORY_VERSION },
 		]);
 	}
 
@@ -349,16 +364,16 @@
 		cache.tools = await readTable('tools');
 		cache.resources = await readTable('resources');
 		const metaRows = await readTable('meta');
-		const versionRow = metaRows.find(row => row.key === 'seed_version');
+		const versionRow = metaRows.find((row) => row.key === 'seed_version');
 		seedVersion = versionRow ? versionRow.value : FACTORY_VERSION;
 		// 读取日志表（按时间排序：会话倒序、日志正序）
-		sessionCache = (await readTable('chat_sessions')).map(row => ({
+		sessionCache = (await readTable('chat_sessions')).map((row) => ({
 			session_id: row.session_id,
 			title: row.title,
 			created_at: row.created_at,
-			updated_at: row.updated_at
+			updated_at: row.updated_at,
 		}));
-		logCache = (await readTable('chat_logs')).map(row => ({
+		logCache = (await readTable('chat_logs')).map((row) => ({
 			log_id: row.log_id,
 			session_id: row.session_id,
 			turn: row.turn,
@@ -366,7 +381,7 @@
 			response_payload: safeParse(row.response_payload),
 			prompt_snapshot: row.prompt_snapshot,
 			tool_snapshot: safeParse(row.tool_snapshot),
-			created_at: row.created_at
+			created_at: row.created_at,
 		}));
 	}
 
@@ -375,13 +390,13 @@
 	/** 由出厂快照构建 prompts 表行数组 */
 	function buildFactoryPromptRows() {
 		const time = nowISO();
-		return factoryDefaults.promptList.map(prompt => ({
+		return factoryDefaults.promptList.map((prompt) => ({
 			name: prompt.name,
 			description: prompt.description || '',
 			messages: JSON.stringify(prompt.messages || []),
 			category: categorizeByName(prompt.name),
 			is_modified: false,
-			updated_at: time
+			updated_at: time,
 		}));
 	}
 
@@ -399,7 +414,7 @@
 				source: 'jdb',
 				enabled: true,
 				is_modified: false,
-				updated_at: time
+				updated_at: time,
 			});
 		}
 		// MCP 元工具:函数体取自出厂函数快照的源码
@@ -414,7 +429,7 @@
 				source: 'meta',
 				enabled: true,
 				is_modified: false,
-				updated_at: time
+				updated_at: time,
 			});
 		}
 		// 精选工具:函数体取自出厂函数快照的源码
@@ -429,7 +444,7 @@
 				source: 'curated',
 				enabled: true,
 				is_modified: false,
-				updated_at: time
+				updated_at: time,
 			});
 		}
 		return rows;
@@ -438,30 +453,30 @@
 	/** 由出厂快照构建 resources 表行数组 */
 	function buildFactoryResourceRows() {
 		const time = nowISO();
-		return factoryDefaults.resourceList.map(res => ({
+		return factoryDefaults.resourceList.map((res) => ({
 			uri: res.uri,
 			name: res.name,
 			description: res.description || '',
 			mime_type: res.mime_type || 'text/markdown',
 			content: res.content || '',
 			is_modified: false,
-			updated_at: time
+			updated_at: time,
 		}));
 	}
 
 	/** 在出厂快照中查找指定工具的出厂行(用于单条恢复默认),找不到返回 null */
 	function buildFactoryToolRow(name) {
-		return buildFactoryToolRows().find(row => row.name === name) || null;
+		return buildFactoryToolRows().find((row) => row.name === name) || null;
 	}
 
 	/** 在出厂快照中查找指定提示词的出厂行(用于单条恢复默认),找不到返回 null */
 	function buildFactoryPromptRow(name) {
-		return buildFactoryPromptRows().find(row => row.name === name) || null;
+		return buildFactoryPromptRows().find((row) => row.name === name) || null;
 	}
 
 	/** 在出厂快照中查找指定资源的出厂行(用于单条恢复默认),找不到返回 null */
 	function buildFactoryResourceRow(uri) {
-		return buildFactoryResourceRows().find(row => row.uri === uri) || null;
+		return buildFactoryResourceRows().find((row) => row.uri === uri) || null;
 	}
 
 	// ==================== 导入合并策略 ====================
@@ -474,8 +489,8 @@
 	 * - 新数据中已删除且未修改的行随之删除。
 	 */
 	function mergeRows(existingRows, incomingRows, keyField) {
-		const existingByKey = new Map(existingRows.map(row => [row[keyField], row]));
-		const incomingKeys = new Set(incomingRows.map(row => row[keyField]));
+		const existingByKey = new Map(existingRows.map((row) => [row[keyField], row]));
+		const incomingKeys = new Set(incomingRows.map((row) => row[keyField]));
 		const merged = [];
 		for (const row of incomingRows) {
 			const existing = existingByKey.get(row[keyField]);
@@ -521,34 +536,40 @@
 	 */
 	function refreshRuntimeCache() {
 		// ---- 提示词 ----
-		window.promptList = cache.prompts.map(row => ({
-			name: row.name,
-			description: row.description,
-			messages: JSON.parse(row.messages)
-		}));
+		// 脏数据容错:单行 messages 解析失败降级为空消息数组,避免中断整个运行时缓存刷新
+		window.promptList = cache.prompts.map((row) => {
+			const messages = safeParse(row.messages);
+			return {
+				name: row.name,
+				description: row.description,
+				messages: Array.isArray(messages) ? messages : [],
+			};
+		});
 
-	// ---- 工具描述(按来源分流,携带 enabled 与 domain 供 mcp/meta-tools.js 与 mcp/curated-tools/index.js 过滤) ----
-	const jdbDescriptions = [];
-	const mcpDescriptions = [];
-	const customDescriptions = [];
-	for (const row of cache.tools) {
-		// domain 取自数据库行;旧库行缺该字段时回退出厂快照同名工具,保证 listTools({scenario}) 场景过滤始终可用
-		let domain = row.domain;
-		if (domain == null) {
-			const factoryRow = buildFactoryToolRow(row.name);
-			domain = factoryRow ? factoryRow.domain : null;
+		// ---- 工具描述(按来源分流,携带 enabled 与 domain 供 mcp/meta-tools.js 与 mcp/curated-tools/index.js 过滤) ----
+		const jdbDescriptions = [];
+		const mcpDescriptions = [];
+		const customDescriptions = [];
+		for (const row of cache.tools) {
+			// domain 取自数据库行;旧库行缺该字段时回退出厂快照同名工具,保证 listTools({scenario}) 场景过滤始终可用
+			let domain = row.domain;
+			if (domain == null) {
+				const factoryRow = buildFactoryToolRow(row.name);
+				domain = factoryRow ? factoryRow.domain : null;
+			}
+			// 脏数据容错:schema 解析失败降级为空对象,避免单行坏数据中断刷新
+			const inputSchema = safeParse(row.input_schema);
+			const description = {
+				name: row.name,
+				description: row.description,
+				inputSchema: inputSchema && typeof inputSchema === 'object' ? inputSchema : {},
+				enabled: row.enabled !== false,
+				domain,
+			};
+			if (row.source === 'jdb') jdbDescriptions.push(description);
+			else if (row.source === 'meta') mcpDescriptions.push(description);
+			else customDescriptions.push(description);
 		}
-		const description = {
-			name: row.name,
-			description: row.description,
-			inputSchema: JSON.parse(row.input_schema),
-			enabled: row.enabled !== false,
-			domain
-		};
-		if (row.source === 'jdb') jdbDescriptions.push(description);
-		else if (row.source === 'meta') mcpDescriptions.push(description);
-		else customDescriptions.push(description);
-	}
 		window.edaApi = jdbDescriptions;
 		// 保活协议层对象后再注入 schema,统一收口至 ensureMCPObjects(),避免时序异常路径下 undefined
 		ensureMCPObjects();
@@ -559,9 +580,7 @@
 		for (const row of cache.tools) {
 			if (!row.impl_code || (row.source !== 'meta' && row.source !== 'curated')) continue;
 			const target = row.source === 'meta' ? window.mcpProtocol : window.curatedTools;
-			const factoryFn = row.source === 'meta'
-				? factoryDefaults.mcpFunctions[row.name]
-				: factoryDefaults.customFunctions[row.name];
+			const factoryFn = row.source === 'meta' ? factoryDefaults.mcpFunctions[row.name] : factoryDefaults.customFunctions[row.name];
 			try {
 				const rebuiltFn = new Function(`return (${row.impl_code})`)();
 				if (typeof rebuiltFn !== 'function') throw new Error('impl_code 未生成函数');
@@ -573,12 +592,12 @@
 		}
 
 		// ---- 资源列表 ----
-		window.resourceList = cache.resources.map(row => ({
+		window.resourceList = cache.resources.map((row) => ({
 			uri: row.uri,
 			name: row.name,
 			description: row.description,
 			mime_type: row.mime_type,
-			content: row.content
+			content: row.content,
 		}));
 
 		// ---- system 消息即时生效(优先走 ai-chat.js 暴露的入口以同步会话历史) ----
@@ -587,9 +606,13 @@
 
 	/** 从提示词列表提取 prompt_index（系统消息承载者）并应用到会话运行时 */
 	function applySystemPromptFromList(promptList) {
-		const systemPrompt = promptList.find(prompt => prompt.name === 'prompt_index');
-		const raw = systemPrompt && systemPrompt.messages && systemPrompt.messages[0]
-			&& systemPrompt.messages[0].content && systemPrompt.messages[0].content.text;
+		const systemPrompt = promptList.find((prompt) => prompt.name === 'prompt_index');
+		const raw =
+			systemPrompt &&
+			systemPrompt.messages &&
+			systemPrompt.messages[0] &&
+			systemPrompt.messages[0].content &&
+			systemPrompt.messages[0].content.text;
 		if (!raw) return;
 		// 发送前将 @name 引用标记还原为裸 name，保证送入模型的文本与标记化前逐字节一致，不改变模型行为
 		const text = stripRefMarks(raw);
@@ -649,7 +672,7 @@
 		if (!text) return [];
 		const names = new Set();
 		// 匹配 @name 显式引用形式
-		for (const m of (text.match(/@([A-Za-z0-9_.\$]+)/g) || [])) {
+		for (const m of text.match(/@([A-Za-z0-9_.\$]+)/g) || []) {
 			names.add(m.slice(1));
 		}
 		return Array.from(names);
@@ -670,26 +693,36 @@
 	function collectAllData() {
 		if (activated) {
 			return {
-				prompts: cache.prompts.map(row => ({
+				prompts: cache.prompts.map((row) => ({
 					name: row.name,
 					description: row.description,
-					messages: JSON.parse(row.messages || '[]')
+					messages: JSON.parse(row.messages || '[]'),
 				})),
-				tools: cache.tools.map(row => ({ name: row.name, impl_code: row.impl_code, description: row.description }))
+				tools: cache.tools.map((row) => ({ name: row.name, impl_code: row.impl_code, description: row.description })),
 			};
 		}
-		const prompts = factoryDefaults.promptList.map(p => ({
-			name: p.name, description: p.description, messages: p.messages || []
+		const prompts = factoryDefaults.promptList.map((p) => ({
+			name: p.name,
+			description: p.description,
+			messages: p.messages || [],
 		}));
 		const tools = [];
 		// 注意：必须携带 description，否则 buildGraph 构造工具节点时 t.description 为 undefined，
 		// 会导致图谱悬浮 tooltip 显示「（无描述）」而 eda-api.js / mcp/curated-tools/index.js / mcp/meta-tools.js 中明明有描述。
 		for (const t of factoryDefaults.edaApi) tools.push({ name: t.name, impl_code: null, description: t.description });
 		for (const t of factoryDefaults.mcpToolDescriptions) {
-			tools.push({ name: t.name, impl_code: factoryDefaults.mcpFunctions[t.name] ? factoryDefaults.mcpFunctions[t.name].toString() : null, description: t.description });
+			tools.push({
+				name: t.name,
+				impl_code: factoryDefaults.mcpFunctions[t.name] ? factoryDefaults.mcpFunctions[t.name].toString() : null,
+				description: t.description,
+			});
 		}
 		for (const t of factoryDefaults.customToolDescriptions) {
-			tools.push({ name: t.name, impl_code: factoryDefaults.customFunctions[t.name] ? factoryDefaults.customFunctions[t.name].toString() : null, description: t.description });
+			tools.push({
+				name: t.name,
+				impl_code: factoryDefaults.customFunctions[t.name] ? factoryDefaults.customFunctions[t.name].toString() : null,
+				description: t.description,
+			});
 		}
 		return { prompts, tools };
 	}
@@ -697,7 +730,7 @@
 	/** 构建全量引用索引（工具互调 + 提示词引用） */
 	function buildRefIndex(prompts, tools) {
 		const index = {};
-		const ensure = (n) => (index[n] || (index[n] = { calls: [], calledBy: [], referencedByPrompts: [] }));
+		const ensure = (n) => index[n] || (index[n] = { calls: [], calledBy: [], referencedByPrompts: [] });
 		for (const t of tools) {
 			// 实现代码中的 @name 显式引用与全局调用 → tool 调用关系(tool_call)
 			const names = extractNames(SANITIZE_FN(t.impl_code || ''));
@@ -772,16 +805,16 @@
 			// 显式 @name 引用 → prompt_ref 或 prompt_tool
 			for (const n of extractNames(body)) {
 				if (n === p.name) continue;
-				const isPrompt = all.prompts.some(x => x.name === n);
+				const isPrompt = all.prompts.some((x) => x.name === n);
 				links.push({
 					source: p.name,
 					target: n,
 					refType: isPrompt ? 'prompt_ref' : 'prompt_tool',
-					strength: 'strong'
+					strength: 'strong',
 				});
 			}
 			// getPrompt({name:'x'}) 字面量范例 → example_call（弱）
-			for (const m of (body.match(/getPrompt\(\{\s*name\s*:\s*['"]([A-Za-z0-9_.\$]+)['"]\s*\}\)/g) || [])) {
+			for (const m of body.match(/getPrompt\(\{\s*name\s*:\s*['"]([A-Za-z0-9_.\$]+)['"]\s*\}\)/g) || []) {
 				const name = m.match(/name\s*:\s*['"]([A-Za-z0-9_.\$]+)['"]/)[1];
 				if (name === p.name) continue;
 				links.push({ source: p.name, target: name, refType: 'example_call', strength: 'weak' });
@@ -789,45 +822,45 @@
 		}
 
 		// 2. 工具节点 + 函数侧引用（tool_call / native_fallback / describes）
-		const customNames = new Set((window.curatedTools.curatedToolSchemas || []).map(t => t.name));
-		const mcpNames = new Set((window.mcpProtocol.metaToolSchemas || []).map(t => t.name));
-		const jdbNames = new Set((window.edaApi || []).map(t => t.name));
+		const customNames = new Set((window.curatedTools.curatedToolSchemas || []).map((t) => t.name));
+		const mcpNames = new Set((window.mcpProtocol.metaToolSchemas || []).map((t) => t.name));
+		const jdbNames = new Set((window.edaApi || []).map((t) => t.name));
 		for (const t of all.tools) {
 			let type = 'custom';
 			if (jdbNames.has(t.name)) type = 'jdb';
 			else if (mcpNames.has(t.name)) type = 'mcp';
 			else if (customNames.has(t.name)) type = 'custom';
 			addNode(t.name, type, null, t.name, t.description);
-		// describes：同 name 的实现与描述配对（强）。
-		// 注意：自环边 source===target 无任何信息增量，且 D3 渲染会在节点旁画出带箭头的弧线（视觉上的「三角」），
-		// 故此处不再生成自环边；实现/描述配对关系由节点自身半径与 tooltip 入/出度表达，无需自环边。
-		// （graph-view.js 的 draw() 也已对 source===target 做双保险过滤）
+			// describes：同 name 的实现与描述配对（强）。
+			// 注意：自环边 source===target 无任何信息增量，且 D3 渲染会在节点旁画出带箭头的弧线（视觉上的「三角」），
+			// 故此处不再生成自环边；实现/描述配对关系由节点自身半径与 tooltip 入/出度表达，无需自环边。
+			// （graph-view.js 的 draw() 也已对 source===target 做双保险过滤）
 			const code = SANITIZE_FN(t.impl_code || '');
 			// 显式 @name 引用（若实现内书写 @name）→ tool_call
 			for (const n of extractNames(code)) {
 				if (n === t.name) continue;
 				links.push({ source: t.name, target: n, refType: 'tool_call', strength: 'strong' });
 			}
-		// window.curatedTools.x() / window.mcpProtocol.x() 全局路径调用 → tool_call（强）
-		// 该识别逻辑与编辑器 extractVisibleRefs 对真实调用的高亮同源,保证图谱边与代码高亮一致
-		// 仅取「第一级方法名」(字符集不含 '.'),切断链式调用后缀(.find 等),避免把 toolDescriptions.find 误判为被调用工具
-		for (const m of (code.match(/window\.(?:curatedTools|mcpProtocol)\.([A-Za-z0-9_$]+)\s*\(/g) || [])) {
-			const callee = m.match(/window\.(?:curatedTools|mcpProtocol)\.([A-Za-z0-9_$]+)/)[1];
-			if (callee === t.name) continue;
-			links.push({ source: t.name, target: callee, refType: 'tool_call', strength: 'strong' });
-		}
-		// eda.* 原生 API 调用 → native_fallback（弱，降级路径）
-		// 同上,与编辑器 extractVisibleRefs 对 eda.* 的高亮同源
-		for (const m of (code.match(/\beda\.[A-Za-z0-9_.\$]+/g) || [])) {
-			const api = m.slice(4);
-			if (api === t.name) continue;
-			links.push({ source: t.name, target: api, refType: 'native_fallback', strength: 'weak' });
-		}
+			// window.curatedTools.x() / window.mcpProtocol.x() 全局路径调用 → tool_call（强）
+			// 该识别逻辑与编辑器 extractVisibleRefs 对真实调用的高亮同源,保证图谱边与代码高亮一致
+			// 仅取「第一级方法名」(字符集不含 '.'),切断链式调用后缀(.find 等),避免把 toolDescriptions.find 误判为被调用工具
+			for (const m of code.match(/window\.(?:curatedTools|mcpProtocol)\.([A-Za-z0-9_$]+)\s*\(/g) || []) {
+				const callee = m.match(/window\.(?:curatedTools|mcpProtocol)\.([A-Za-z0-9_$]+)/)[1];
+				if (callee === t.name) continue;
+				links.push({ source: t.name, target: callee, refType: 'tool_call', strength: 'strong' });
+			}
+			// eda.* 原生 API 调用 → native_fallback（弱，降级路径）
+			// 同上,与编辑器 extractVisibleRefs 对 eda.* 的高亮同源
+			for (const m of code.match(/\beda\.[A-Za-z0-9_.\$]+/g) || []) {
+				const api = m.slice(4);
+				if (api === t.name) continue;
+				links.push({ source: t.name, target: api, refType: 'native_fallback', strength: 'weak' });
+			}
 		}
 
 		// 3. 资源节点：由 window.resourceList 提供（出厂默认集在 mcp/resources.js 定义，
 		//    激活后来自 cache.resources）。提示词以 @uri 引用资源时，此处补全节点使 prompt_tool 连线落地。
-		for (const r of (window.resourceList || [])) {
+		for (const r of window.resourceList || []) {
 			addNode(r.uri, 'resource', null, r.name || r.uri, r.description || '');
 		}
 
@@ -845,9 +878,9 @@
 			messages: JSON.stringify(messages || []),
 			category: categorizeByName(name),
 			is_modified: true,
-			updated_at: time
+			updated_at: time,
 		};
-		const existing = cache.prompts.find(item => item.name === name);
+		const existing = cache.prompts.find((item) => item.name === name);
 		if (existing) Object.assign(existing, row);
 		else cache.prompts.push(row);
 		await persistTable('prompts');
@@ -857,7 +890,7 @@
 	/** 删除提示词（仅数据库已激活时可用；删除前调用方应先做引用保护检查） */
 	async function deletePrompt(name) {
 		this.assertActivated();
-		const index = cache.prompts.findIndex(item => item.name === name);
+		const index = cache.prompts.findIndex((item) => item.name === name);
 		if (index < 0) throw new Error(`提示词不存在: ${name}`);
 		cache.prompts.splice(index, 1);
 		await persistTable('prompts');
@@ -870,14 +903,14 @@
 	function persistSessions() {
 		ensureAttached()
 			.then(() => overwriteTable('chat_sessions', sessionCache))
-			.catch(error => console.error('[data-store] 会话持久化失败:', error));
+			.catch((error) => console.error('[data-store] 会话持久化失败:', error));
 	}
 
 	/** 调用日志写入（fire-and-forget，失败不影响主流程） */
 	function persistLogs() {
 		ensureAttached()
 			.then(() => overwriteTable('chat_logs', logCache))
-			.catch(error => console.error('[data-store] 日志持久化失败:', error));
+			.catch((error) => console.error('[data-store] 日志持久化失败:', error));
 	}
 
 	/**
@@ -910,10 +943,10 @@
 			response_payload: null,
 			prompt_snapshot: promptSnapshot ?? '',
 			tool_snapshot: toolSnapshot ?? null,
-			created_at: now
+			created_at: now,
 		});
 		// 刷新会话时间并落库
-		const s = sessionCache.find(x => x.session_id === sessionId);
+		const s = sessionCache.find((x) => x.session_id === sessionId);
 		if (s) s.updated_at = now;
 		persistLogs();
 		return logId;
@@ -922,7 +955,7 @@
 	/** 回填日志响应（收到 AI 响应后调用） */
 	function updateLogResponse(logId, responsePayload) {
 		if (!logId) return;
-		const r = logCache.find(x => x.log_id === logId);
+		const r = logCache.find((x) => x.log_id === logId);
 		if (r) r.response_payload = responsePayload ?? null;
 		persistLogs();
 	}
@@ -938,7 +971,7 @@
 		// 在读取出口去重可保证导出(复制全部)内容单份,且不动写入逻辑避免数据丢失风险。
 		const seen = new Set();
 		return logCache
-			.filter(x => x.session_id === sessionId && !seen.has(x.log_id) && seen.add(x.log_id))
+			.filter((x) => x.session_id === sessionId && !seen.has(x.log_id) && seen.add(x.log_id))
 			.sort((a, b) => (a.turn || 0) - (b.turn || 0));
 	}
 
@@ -993,11 +1026,14 @@
 
 		/** 导入出厂默认 1.0(从出厂快照构建数据;已激活时与用户修改合并) */
 		async importFactoryDefaults() {
-			await applyImport({
-				prompts: buildFactoryPromptRows(),
-				tools: buildFactoryToolRows(),
-				resources: buildFactoryResourceRows()
-			}, FACTORY_VERSION);
+			await applyImport(
+				{
+					prompts: buildFactoryPromptRows(),
+					tools: buildFactoryToolRows(),
+					resources: buildFactoryResourceRows(),
+				},
+				FACTORY_VERSION,
+			);
 		},
 
 		/**
@@ -1015,7 +1051,7 @@
 				factoryDefaults.mcpToolDescriptions,
 				factoryDefaults.customToolDescriptions,
 				factoryDefaults.mcpFunctions,
-				factoryDefaults.customFunctions
+				factoryDefaults.customFunctions,
 			);
 			await applyImport(rows, FACTORY_VERSION);
 		},
@@ -1076,7 +1112,9 @@
 			try {
 				const data = JSON.parse(text);
 				if (typeof data.version === 'string') seedVer = data.version;
-			} catch (_) { /* JSON 解析失败交由 importFromFile 统一报错 */ }
+			} catch (_) {
+				/* JSON 解析失败交由 importFromFile 统一报错 */
+			}
 			await this.importFromFile(firstFile);
 			if (seedVer) seedVersion = seedVer;
 		},
@@ -1115,11 +1153,14 @@
 			} else {
 				throw new Error('文件格式不符合 psa-export 规范(缺少 tools 字段)');
 			}
-			await applyImport({
-				prompts: data.prompts,
-				tools,
-				resources: data.resources
-			}, data.version);
+			await applyImport(
+				{
+					prompts: data.prompts,
+					tools,
+					resources: data.resources,
+				},
+				data.version,
+			);
 		},
 
 		/** 导出当前数据库数据为 JSON 文件(按 source 分组工具,可另存为新版本号) */
@@ -1141,13 +1182,9 @@
 				exportedAt: nowISO(),
 				prompts: cache.prompts,
 				tools: toolsBySource,
-				resources: cache.resources
+				resources: cache.resources,
 			};
-			downloadTextFile(
-				`${EXPORT_FILE_PREFIX}${exportVersion}.json`,
-				JSON.stringify(payload, null, 2),
-				'application/json'
-			);
+			downloadTextFile(`${EXPORT_FILE_PREFIX}${exportVersion}.json`, JSON.stringify(payload, null, 2), 'application/json');
 		},
 
 		/**
@@ -1158,24 +1195,24 @@
 			// 提示词重建版
 			downloadTextFile(
 				`mcp-prompt.export.v${FACTORY_VERSION}.js`,
-				`// 出厂默认 ${FACTORY_VERSION} 提示词数据重建版(由 data-store 导出)\n`
-				+ `window.promptList = ${JSON.stringify(factoryDefaults.promptList, null, '\t')};\n`,
-				'text/javascript'
+				`// 出厂默认 ${FACTORY_VERSION} 提示词数据重建版(由 data-store 导出)\n` +
+					`window.promptList = ${JSON.stringify(factoryDefaults.promptList, null, '\t')};\n`,
+				'text/javascript',
 			);
-		// 原生API描述重建版
-		downloadTextFile(
-			`eda-api.export.v${FACTORY_VERSION}.js`,
-			`// 出厂默认 ${FACTORY_VERSION} 原生API描述数据重建版(由 data-store 导出)\n`
-			+ `window.edaApi = ${JSON.stringify(factoryDefaults.edaApi, null, '\t')};\n`,
-			'text/javascript'
-		);
-		// 资源重建版(与 window.resourceList 挂载区默认集一致)
-		downloadTextFile(
-			`resource-list.export.v${FACTORY_VERSION}.js`,
-			`// 出厂默认 ${FACTORY_VERSION} 资源列表数据重建版(由 data-store 导出)\n`
-			+ `window.resourceList = ${JSON.stringify(factoryDefaults.resourceList, null, '\t')};\n`,
-			'text/javascript'
-		);
+			// 原生API描述重建版
+			downloadTextFile(
+				`eda-api.export.v${FACTORY_VERSION}.js`,
+				`// 出厂默认 ${FACTORY_VERSION} 原生API描述数据重建版(由 data-store 导出)\n` +
+					`window.edaApi = ${JSON.stringify(factoryDefaults.edaApi, null, '\t')};\n`,
+				'text/javascript',
+			);
+			// 资源重建版(与 window.resourceList 挂载区默认集一致)
+			downloadTextFile(
+				`resource-list.export.v${FACTORY_VERSION}.js`,
+				`// 出厂默认 ${FACTORY_VERSION} 资源列表数据重建版(由 data-store 导出)\n` +
+					`window.resourceList = ${JSON.stringify(factoryDefaults.resourceList, null, '\t')};\n`,
+				'text/javascript',
+			);
 			// 元工具/精选工具重建版(描述 + 函数源码)
 			const functionLines = [];
 			for (const [name, fn] of Object.entries(factoryDefaults.mcpFunctions)) {
@@ -1186,11 +1223,12 @@
 			}
 			downloadTextFile(
 				`mcp-tools.export.v${FACTORY_VERSION}.js`,
-				`// 出厂默认 ${FACTORY_VERSION} 元工具/精选工具数据重建版(由 data-store 导出)\n`
-				+ `window.mcpProtocol.metaToolSchemas = ${JSON.stringify(factoryDefaults.mcpToolDescriptions, null, '\t')};\n`
-				+ `window.curatedTools.curatedToolSchemas = ${JSON.stringify(factoryDefaults.customToolDescriptions, null, '\t')};\n`
-				+ functionLines.join('\n') + '\n',
-				'text/javascript'
+				`// 出厂默认 ${FACTORY_VERSION} 元工具/精选工具数据重建版(由 data-store 导出)\n` +
+					`window.mcpProtocol.metaToolSchemas = ${JSON.stringify(factoryDefaults.mcpToolDescriptions, null, '\t')};\n` +
+					`window.curatedTools.curatedToolSchemas = ${JSON.stringify(factoryDefaults.customToolDescriptions, null, '\t')};\n` +
+					functionLines.join('\n') +
+					'\n',
+				'text/javascript',
 			);
 		},
 
@@ -1216,7 +1254,8 @@
 			const mcpFns = [];
 			const customFns = [];
 			for (const row of cache.tools) {
-				if (row.source === 'meta') {					mcpDesc.push({ name: row.name, description: row.description, inputSchema: safeParse(row.input_schema) });
+				if (row.source === 'meta') {
+					mcpDesc.push({ name: row.name, description: row.description, inputSchema: safeParse(row.input_schema) });
 					if (row.impl_code) mcpFns.push(`window.mcpProtocol[${JSON.stringify(row.name)}] = (${row.impl_code});`);
 				} else if (row.source === 'curated') {
 					customDesc.push({ name: row.name, description: row.description, inputSchema: safeParse(row.input_schema) });
@@ -1225,11 +1264,18 @@
 			}
 			downloadTextFile(
 				`mcp-tools.export.v${ver}.js`,
-				'// 数据库 v' + ver + ' 元工具/精选工具数据重建版(由 data-store 导出)\n'
-				+ 'window.mcpProtocol.metaToolSchemas = ' + JSON.stringify(mcpDesc, null, '\t') + ';\n'
-				+ 'window.curatedTools.curatedToolSchemas = ' + JSON.stringify(customDesc, null, '\t') + ';\n'
-				+ mcpFns.concat(customFns).join('\n') + '\n',
-				'text/javascript'
+				'// 数据库 v' +
+					ver +
+					' 元工具/精选工具数据重建版(由 data-store 导出)\n' +
+					'window.mcpProtocol.metaToolSchemas = ' +
+					JSON.stringify(mcpDesc, null, '\t') +
+					';\n' +
+					'window.curatedTools.curatedToolSchemas = ' +
+					JSON.stringify(customDesc, null, '\t') +
+					';\n' +
+					mcpFns.concat(customFns).join('\n') +
+					'\n',
+				'text/javascript',
 			);
 		},
 
@@ -1249,15 +1295,15 @@
 				request.onblocked = () => resolve();
 				request.onerror = () => reject(request.error);
 			});
-		localStorage.removeItem(LS_ACTIVATED_KEY);
-		activated = false;
-		seedVersion = FACTORY_VERSION;
-		cache.prompts = [];
-		cache.tools = [];
-		cache.resources = [];
-		sessionCache = []; // 清空日志缓存
-		logCache = []; // 清空日志缓存
-		restoreFactoryRuntime();
+			localStorage.removeItem(LS_ACTIVATED_KEY);
+			activated = false;
+			seedVersion = FACTORY_VERSION;
+			cache.prompts = [];
+			cache.tools = [];
+			cache.resources = [];
+			sessionCache = []; // 清空日志缓存
+			logCache = []; // 清空日志缓存
+			restoreFactoryRuntime();
 		},
 
 		// ---------- 查询(抽屉界面数据源;未激活时返回出厂只读数据) ----------
@@ -1270,7 +1316,7 @@
 		/** 获取工具行列表(可按来源过滤:'jdb' | 'mcp' | 'custom';未激活时由出厂快照即时构建) */
 		listToolRows(source) {
 			const rows = activated ? cache.tools.slice() : buildFactoryToolRows();
-			return source ? rows.filter(row => row.source === source) : rows;
+			return source ? rows.filter((row) => row.source === source) : rows;
 		},
 
 		/** 获取资源行列表(统一行结构;未激活时由出厂快照即时构建) */
@@ -1288,7 +1334,7 @@
 		/** 更新提示词(patch: {description?, messages?(JSON字符串)}) */
 		async updatePrompt(name, patch) {
 			this.assertActivated();
-			const row = cache.prompts.find(item => item.name === name);
+			const row = cache.prompts.find((item) => item.name === name);
 			if (!row) throw new Error(`提示词不存在: ${name}`);
 			if (patch.messages !== undefined) {
 				JSON.parse(patch.messages); // 保存前强校验 JSON
@@ -1297,27 +1343,27 @@
 			if (patch.description !== undefined) row.description = patch.description;
 			row.is_modified = true;
 			row.updated_at = nowISO();
-		await persistTable('prompts');
-		refreshRuntimeCache();
-	},
+			await persistTable('prompts');
+			refreshRuntimeCache();
+		},
 
-	/** 更新资源(patch: {description?, content?}) */
-	async updateResource(uri, patch) {
-		this.assertActivated();
-		const row = cache.resources.find(item => item.uri === uri);
-		if (!row) throw new Error(`资源不存在: ${uri}`);
-		if (patch.description !== undefined) row.description = patch.description;
-		if (patch.content !== undefined) row.content = patch.content;
-		row.is_modified = true;
-		row.updated_at = nowISO();
-		await persistTable('resources');
-		refreshRuntimeCache();
-	},
+		/** 更新资源(patch: {description?, content?}) */
+		async updateResource(uri, patch) {
+			this.assertActivated();
+			const row = cache.resources.find((item) => item.uri === uri);
+			if (!row) throw new Error(`资源不存在: ${uri}`);
+			if (patch.description !== undefined) row.description = patch.description;
+			if (patch.content !== undefined) row.content = patch.content;
+			row.is_modified = true;
+			row.updated_at = nowISO();
+			await persistTable('resources');
+			refreshRuntimeCache();
+		},
 
-	/** 更新工具(patch: {description?, inputSchema?(JSON字符串), implCode?, enabled?}) */
+		/** 更新工具(patch: {description?, inputSchema?(JSON字符串), implCode?, enabled?}) */
 		async updateTool(name, patch) {
 			this.assertActivated();
-			const row = cache.tools.find(item => item.name === name);
+			const row = cache.tools.find((item) => item.name === name);
 			if (!row) throw new Error(`工具不存在: ${name}`);
 			if (patch.inputSchema !== undefined) {
 				JSON.parse(patch.inputSchema); // 保存前强校验 JSON
@@ -1345,7 +1391,7 @@
 			if (!name || !/^[A-Za-z_][\w$]*$/.test(name)) {
 				throw new Error('工具名称不合法(需以字母/下划线开头,可含字母数字下划线和$)');
 			}
-			if (cache.tools.some(item => item.name === name)) {
+			if (cache.tools.some((item) => item.name === name)) {
 				throw new Error(`工具已存在: ${name}`);
 			}
 			cache.tools.push({
@@ -1356,7 +1402,7 @@
 				source: 'curated',
 				enabled: true,
 				is_modified: true,
-				updated_at: nowISO()
+				updated_at: nowISO(),
 			});
 			await persistTable('tools');
 			refreshRuntimeCache();
@@ -1368,7 +1414,7 @@
 			if (buildFactoryToolRow(name)) {
 				throw new Error('出厂工具不允许删除,请使用「禁用」');
 			}
-			const index = cache.tools.findIndex(item => item.name === name);
+			const index = cache.tools.findIndex((item) => item.name === name);
 			if (index < 0) throw new Error(`工具不存在: ${name}`);
 			cache.tools.splice(index, 1);
 			await persistTable('tools');
@@ -1380,7 +1426,7 @@
 			this.assertActivated();
 			const factoryRow = buildFactoryPromptRow(name);
 			if (!factoryRow) throw new Error(`该提示词无出厂默认版本: ${name}`);
-			const index = cache.prompts.findIndex(item => item.name === name);
+			const index = cache.prompts.findIndex((item) => item.name === name);
 			if (index < 0) cache.prompts.push(factoryRow);
 			else cache.prompts[index] = factoryRow;
 			await persistTable('prompts');
@@ -1392,7 +1438,7 @@
 			this.assertActivated();
 			const factoryRow = buildFactoryToolRow(name);
 			if (!factoryRow) throw new Error(`该工具无出厂默认版本: ${name}`);
-			const index = cache.tools.findIndex(item => item.name === name);
+			const index = cache.tools.findIndex((item) => item.name === name);
 			if (index < 0) cache.tools.push(factoryRow);
 			else cache.tools[index] = factoryRow;
 			await persistTable('tools');
@@ -1404,7 +1450,7 @@
 			this.assertActivated();
 			const factoryRow = buildFactoryResourceRow(uri);
 			if (!factoryRow) throw new Error(`该资源无出厂默认版本: ${uri}`);
-			const index = cache.resources.findIndex(item => item.uri === uri);
+			const index = cache.resources.findIndex((item) => item.uri === uri);
 			if (index < 0) cache.resources.push(factoryRow);
 			else cache.resources[index] = factoryRow;
 			await persistTable('resources');
@@ -1450,6 +1496,6 @@
 			await overwriteTable('chat_logs', []);
 			sessionCache = [];
 			logCache = [];
-		}
+		},
 	};
 })();

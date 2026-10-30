@@ -82,6 +82,8 @@ function main() {
 		zip.file(file, fs.createReadStream(__dirname + '/../' + file));
 	}
 
+	// 确保输出目录存在(fresh clone 无 build/dist,createWriteStream 不会自动创建父目录)
+	fs.ensureDirSync(__dirname + '/dist/');
 	zip.generateNodeStream({ type: 'nodebuffer', streamFiles: true }).pipe(
 		fs.createWriteStream(__dirname + '/dist/' + extensionConfig.name + '_v' + extensionConfig.version + '.eext'),
 	);

@@ -66,7 +66,7 @@ function validateArguments(args, schema) {
  */
 function buildTextResponse(text, isError) {
 	return {
-		content: [{ type: "text", text }],
+		content: [{ type: 'text', text }],
 		isError,
 	};
 }
@@ -81,7 +81,8 @@ function buildTextResponse(text, isError) {
  */
 const CALL_TOOL_SCHEMA = {
 	name: 'callTool',
-	description: '统一工具入口:调用任意下层工具(精选工具/EDA 原生 API)时,将下层工具名填入 name 参数(如 name:"lib_Device$search"),其参数填入 arguments;切勿将 name 填为 "callTool" 自身',
+	description:
+		'统一工具入口:调用任意下层工具(精选工具/EDA 原生 API)时,将下层工具名填入 name 参数(如 name:"lib_Device$search"),其参数填入 arguments;切勿将 name 填为 "callTool" 自身',
 	inputSchema: {
 		type: 'object',
 		properties: {
@@ -104,14 +105,14 @@ async function callTool(params) {
 		// 必须从 arguments.name 提取真实目标工具名再调度,而非用 'callTool' 去找实现。
 		const { name, arguments: args } = params;
 		// 解析真实目标工具名:处理前端 dispatcher 中转场景(前端恒传 name="callTool")。
-		const targetName = (name === 'callTool' && args && typeof args.name === 'string') ? args.name : name;
+		const targetName = name === 'callTool' && args && typeof args.name === 'string' ? args.name : name;
 		// 解析真实工具参数:dispatcher 中转场景下 args 是 {name, arguments} 包装,真实参数位于
 		// 内层 arguments 字段,须解包后再校验与分发;直接调用场景下 args 本身即工具参数。
 		const isDispatch = name === 'callTool' && args && typeof args.arguments === 'object' && args.arguments !== null;
-		const toolArgs = isDispatch ? args.arguments : (args || {});
+		const toolArgs = isDispatch ? args.arguments : args || {};
 		const [className, methodName] = targetName.split('.');
-		const toolSchema = window.mcpProtocol.listTools().tools.find(tool => tool.name === targetName) ||
-		window.edaApi.find(tool => tool.name === targetName);
+		const toolSchema =
+			window.mcpProtocol.listTools().tools.find((tool) => tool.name === targetName) || window.edaApi.find((tool) => tool.name === targetName);
 		if (!toolSchema) {
 			return buildTextResponse(`工具不存在: ${targetName}`, true);
 		}
@@ -128,8 +129,7 @@ async function callTool(params) {
 		// 若一并排除则它们经 callTool 调用时必报「工具不存在」。注意此处仍用 targetName 判断,
 		// 分发后真实目标不应再被当作壳自身排除(见 docs/08232315.log 修复)。
 		const PROTOCOL_SHELL_NAMES = new Set(['callTool']);
-		const curatedImpl = (PROTOCOL_SHELL_NAMES.has(targetName) ? undefined : window.mcpProtocol[targetName])
-			|| window.curatedTools[curatedKey];
+		const curatedImpl = (PROTOCOL_SHELL_NAMES.has(targetName) ? undefined : window.mcpProtocol[targetName]) || window.curatedTools[curatedKey];
 		let result;
 		if (typeof curatedImpl === 'function') {
 			result = await curatedImpl(toolArgs);
@@ -140,7 +140,12 @@ async function callTool(params) {
 			}
 			result = await nativeTool(...Object.values(toolArgs));
 		}
-		if (result !== null && ['string', 'number', 'boolean', 'object'].includes(typeof result)) {
+		if (result === undefined || result === null) {
+			// 众多 eda.* 原生写操作 API 成功执行时返回 undefined/null,
+			// 应视为成功;否则模型会误判失败并重试,可能造成重复放置元件等副作用
+			return buildTextResponse('工具执行成功(无返回值)', false);
+		}
+		if (['string', 'number', 'boolean', 'object'].includes(typeof result)) {
 			return buildTextResponse(typeof result === 'string' ? result : JSON.stringify(result, null, 2), false);
 		} else {
 			return buildTextResponse(`工具执行失败 [${targetName}]: ${result}`, true);
@@ -166,7 +171,7 @@ const LIST_TOOLS_SCHEMA = {
 			scenario: { type: 'string', description: '可选,按域(domain)过滤函数子集' },
 			limit: { type: 'number', description: '可选,返回条数上限(默认50,硬上限100)' },
 		},
-		required: []
+		required: [],
 	},
 	semantic_tags: ['列举', '工具', '过滤'],
 	source: 'meta',
@@ -178,10 +183,10 @@ function listTools({ scenario, limit = 50 } = {}) {
 	// 否则下方按 scenario 过滤时 tool.domain 恒为 undefined,导致永远匹配不到任何领域工具。
 	const allTools = window.mcpProtocol.metaToolSchemas
 		.concat(window.curatedTools.curatedToolSchemas)
-		.filter(tool => tool.enabled !== false)
+		.filter((tool) => tool.enabled !== false)
 		.map(({ name, description, domain }) => ({ name, description, domain }));
 	if (scenario) {
-		const filtered = allTools.filter(tool => tool.domain === scenario);
+		const filtered = allTools.filter((tool) => tool.domain === scenario);
 		if (filtered.length === 0) {
 			return {
 				tools: [],
@@ -210,7 +215,7 @@ const LIST_RESOURCES_SCHEMA = {
 		properties: {
 			keywords: { type: 'string', description: '可选,按名称/描述模糊过滤资源(不返回正文)' },
 		},
-		required: []
+		required: [],
 	},
 	semantic_tags: ['列举', '资源'],
 	source: 'meta',
@@ -218,7 +223,7 @@ const LIST_RESOURCES_SCHEMA = {
 };
 function listResources({ keywords } = {}) {
 	const metas = (window.resourceList || [])
-		.filter(r => r && r.enabled !== false)
+		.filter((r) => r && r.enabled !== false)
 		.map(({ uri, name, description, mime_type, mimeType }) => ({
 			uri,
 			name,
@@ -226,13 +231,12 @@ function listResources({ keywords } = {}) {
 			mimeType: mime_type || mimeType,
 		}));
 	if (!keywords) {
-		const root = metas.filter(r => r.uri === 'resource_jlc_sch_overview');
+		const root = metas.filter((r) => r.uri === 'resource_jlc_sch_overview');
 		return { resources: root.length > 0 ? root : metas.slice(0, 1) };
 	}
 	const kw = String(keywords).toLowerCase();
-	const filtered = metas.filter(r =>
-		(r.name && r.name.toLowerCase().includes(kw)) ||
-		(r.description && r.description.toLowerCase().includes(kw))
+	const filtered = metas.filter(
+		(r) => (r.name && r.name.toLowerCase().includes(kw)) || (r.description && r.description.toLowerCase().includes(kw)),
 	);
 	return { resources: filtered.slice(0, 50) };
 }
@@ -253,7 +257,7 @@ const READ_RESOURCE_SCHEMA = {
 		properties: {
 			uri: { type: 'string', description: '资源 URI' },
 		},
-		required: ['uri']
+		required: ['uri'],
 	},
 	semantic_tags: ['读取', '资源'],
 	source: 'meta',
@@ -261,18 +265,20 @@ const READ_RESOURCE_SCHEMA = {
 };
 async function readResource(params) {
 	const { uri } = params;
-	const resource = window.resourceList.find(resource => resource.uri === uri);
+	const resource = window.resourceList.find((resource) => resource.uri === uri);
 	if (!resource) {
 		const error = new Error(`资源不存在: ${uri}`);
 		error.code = 'RESOURCE_NOT_FOUND';
 		throw error;
 	}
 	return {
-		contents: [{
-			uri: resource.uri,
-			mimeType: resource.mime_type || resource.mimeType,
-			text: resource.content
-		}]
+		contents: [
+			{
+				uri: resource.uri,
+				mimeType: resource.mime_type || resource.mimeType,
+				text: resource.content,
+			},
+		],
 	};
 }
 
@@ -291,7 +297,7 @@ const LIST_PROMPTS_SCHEMA = {
 		properties: {
 			limit: { type: 'number', description: '可选,返回条数上限(默认50,硬上限100)' },
 		},
-		required: []
+		required: [],
 	},
 	semantic_tags: ['列举', '提示'],
 	source: 'meta',
@@ -299,9 +305,7 @@ const LIST_PROMPTS_SCHEMA = {
 };
 function listPrompts({ limit = 50 } = {}) {
 	const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
-	const prompts = (window.promptList || [])
-		.filter(p => p && p.enabled !== false)
-		.map(p => ({ name: p.name, description: p.description }));
+	const prompts = (window.promptList || []).filter((p) => p && p.enabled !== false).map((p) => ({ name: p.name, description: p.description }));
 	return { prompts: prompts.slice(0, safeLimit), total: prompts.length, has_more: prompts.length > safeLimit };
 }
 
@@ -330,17 +334,15 @@ const GET_PROMPT_SCHEMA = {
 };
 async function getPrompt(params) {
 	const { name, arguments: _args } = params;
-	const prompt = window.promptList.find(prompt => prompt.name === name);
+	const prompt = window.promptList.find((prompt) => prompt.name === name);
 	if (!prompt) {
 		throw new Error(`提示不存在: ${name}`);
 	}
-	const messages = prompt?.messages.filter(message =>
-		[null, undefined].includes(_args) ? true : message.role === _args.name
-	) || [];
-	messages.map(m => m.content.text = m.content.text.replace(/\n\s+/g, '\n'));
+	const messages = prompt?.messages.filter((message) => ([null, undefined].includes(_args) ? true : message.role === _args.name)) || [];
+	messages.map((m) => (m.content.text = m.content.text.replace(/\n\s+/g, '\n')));
 	return {
 		description: prompt?.description || '',
-		messages: messages
+		messages: messages,
 	};
 }
 
@@ -359,7 +361,7 @@ const GET_TOOL_SCHEMA = {
 		properties: {
 			name: { type: 'string', description: '工具名称(与 listTools 返回的 name 一致)' },
 		},
-		required: ['name']
+		required: ['name'],
 	},
 	semantic_tags: ['获取', '工具', 'schema'],
 	source: 'meta',
@@ -371,7 +373,7 @@ function getTool({ name }) {
 	}
 	const tool = window.mcpProtocol.metaToolSchemas
 		.concat(window.curatedTools.curatedToolSchemas)
-		.find(t => t.name === name && t.enabled !== false);
+		.find((t) => t.name === name && t.enabled !== false);
 	if (!tool) {
 		return buildTextResponse(`工具不存在或未启用: ${name}`, true);
 	}
@@ -398,7 +400,7 @@ const SEARCH_RESOURCES_SCHEMA = {
 			keywords: { type: 'array', items: { type: 'string' }, description: '检索关键词(必填,可多词 OR 组合)' },
 			limit: { type: 'number', description: '可选,返回条数上限(默认10,硬上限30)' },
 		},
-		required: ['keywords']
+		required: ['keywords'],
 	},
 	semantic_tags: ['检索', '资源', '关键词'],
 	source: 'meta',
@@ -408,18 +410,18 @@ function searchResources({ keywords, limit = 10 } = {}) {
 	if (!keywords || (Array.isArray(keywords) && keywords.length === 0)) {
 		return { resources: [], error: 'keywords 必填:资源库体量庞大,请使用关键词检索而非全量列举' };
 	}
-	const kwList = (Array.isArray(keywords) ? keywords : [keywords]).map(k => String(k).toLowerCase());
+	const kwList = (Array.isArray(keywords) ? keywords : [keywords]).map((k) => String(k).toLowerCase());
 	const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 30);
 	const metas = (window.resourceList || [])
-		.filter(r => r && r.enabled !== false)
+		.filter((r) => r && r.enabled !== false)
 		.map(({ uri, name, description, mime_type, mimeType }) => ({
-			uri, name, description, mimeType: mime_type || mimeType,
+			uri,
+			name,
+			description,
+			mimeType: mime_type || mimeType,
 		}));
-	const matched = metas.filter(r =>
-		kwList.some(kw =>
-			(r.name && r.name.toLowerCase().includes(kw)) ||
-			(r.description && r.description.toLowerCase().includes(kw))
-		)
+	const matched = metas.filter((r) =>
+		kwList.some((kw) => (r.name && r.name.toLowerCase().includes(kw)) || (r.description && r.description.toLowerCase().includes(kw))),
 	);
 	return {
 		resources: matched.slice(0, safeLimit),
@@ -445,7 +447,7 @@ const SEARCH_TOOLS_SCHEMA = {
 			keywords: { type: 'array', items: { type: 'string' }, description: '检索关键词(必填,可多词 OR 组合)' },
 			limit: { type: 'number', description: '可选,返回条数上限(默认10,硬上限30)' },
 		},
-		required: ['keywords']
+		required: ['keywords'],
 	},
 	semantic_tags: ['搜索', '原生API', '关键词', '检索'],
 	source: 'meta',
@@ -456,15 +458,15 @@ function searchTools({ keywords, limit = 10 } = {}) {
 		return [];
 	}
 	const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 30);
-	const keywordSet = new Set(keywords.map(k => String(k).toLowerCase()));
+	const keywordSet = new Set(keywords.map((k) => String(k).toLowerCase()));
 	// 按 semantic_tags 命中关键词累加得分(命中一个关键词计 2 分,未提供标签计 0 分)
 	const scoreByTag = (tags) => {
 		if (!Array.isArray(tags)) return 0;
 		return tags.reduce((acc, tag) => acc + (keywordSet.has(String(tag).toLowerCase()) ? 2 : 0), 0);
 	};
 	const results = (window.edaApi || [])
-		.filter(m => m.enabled !== false)
-		.map(m => {
+		.filter((m) => m.enabled !== false)
+		.map((m) => {
 			const msg = `name:${m.name},description:${m.description},inputSchema:${JSON.stringify(m.inputSchema)}`;
 			let score = 0;
 			for (const keyword of keywords) {
@@ -473,19 +475,20 @@ function searchTools({ keywords, limit = 10 } = {}) {
 			if (score === 0) return null;
 			return { name: m.name, description: m.description, inputSchema: m.inputSchema, score };
 		})
-		.filter(r => r !== null)
+		.filter((r) => r !== null)
 		.sort((a, b) => b.score - a.score)
-		.map(result => {
+		.map((result) => {
 			const customApiName = result.name.replace('.', '$');
-			const custom = (window.curatedTools && Array.isArray(window.curatedTools.curatedToolSchemas))
-				? window.curatedTools.curatedToolSchemas.find(t => t.name === customApiName && t.enabled !== false)
-				: null;
+			const custom =
+				window.curatedTools && Array.isArray(window.curatedTools.curatedToolSchemas)
+					? window.curatedTools.curatedToolSchemas.find((t) => t.name === customApiName && t.enabled !== false)
+					: null;
 			if (custom) {
 				return { ...custom, score: result.score + scoreByTag(custom.semantic_tags), domain: custom.domain };
 			}
 			return result;
 		});
-	return results.filter(r => r.score > 0).slice(0, safeLimit);
+	return results.filter((r) => r.score > 0).slice(0, safeLimit);
 }
 
 // ==================== 超级对象挂载区(★ 全部 window 赋值集中置于文件末尾) ====================

@@ -10,8 +10,8 @@
 		<div class="chat-container">
 			<!-- 标题栏 -->
 			<div class="chat-header">
-			<h2>原理图设计 AI巧绘</h2>
-			<div class="header-buttons">
+				<h2>原理图设计 AI巧绘</h2>
+				<div class="header-buttons">
 					<label class="auto-exec-toggle">
 						<input type="checkbox" id="autoExecWriteCheckbox" class="auto-exec-checkbox" />
 						自动执行
@@ -56,57 +56,66 @@
 		<div id="configDialog" class="config-dialog" style="display: none">
 			<div class="config-overlay"></div>
 			<div class="config-content">
-			<div class="config-header">
-				<h3>ARK API 配置</h3>
-				<button class="config-close-btn" id="configCloseBtn" title="关闭">×</button>
-			</div>
-			<div class="config-body">
-				<div class="config-intro">
-					<p>为了使用 AI巧绘功能，您需要配置 ARK API 的相关信息。如果您有开发者的经验,请自行前往
-						<a href="https://www.volcengine.com/" target="_blank" rel="noopener noreferrer">火山引擎官网</a>
-						注册并获取 API Key 和 Model 信息。<br/>
-						或者您想要立马试用一下这个工具,也可以点击
-						<a href="#" id="privateServerLink" target="_blank" rel="noopener noreferrer">私服登录</a>领取token后立马使用。
-						 </p>
+				<div class="config-header">
+					<h3>ARK API 配置</h3>
+					<button class="config-close-btn" id="configCloseBtn" title="关闭">×</button>
 				</div>
-				<div class="config-item">
-					<label>连接模式：</label>
-					<div class="mode-selector">
-						<label class="mode-option" id="modeOptionPrivate"><input type="radio" name="connMode" value="private" /> 私服</label>
-						<label class="mode-option"><input type="radio" name="connMode" value="ark" /> ARK 官网</label>
-						<label class="mode-option"><input type="radio" name="connMode" value="custom" /> 自定义模型</label>
+				<div class="config-body">
+					<div class="config-intro">
+						<p>
+							为了使用 AI巧绘功能，您需要配置 ARK API 的相关信息。如果您有开发者的经验,请自行前往
+							<a href="https://www.volcengine.com/" target="_blank" rel="noopener noreferrer">火山引擎官网</a>
+							注册并获取 API Key 和 Model 信息。<br />
+							或者您想要立马试用一下这个工具,也可以点击
+							<a href="#" id="privateServerLink" target="_blank" rel="noopener noreferrer">私服登录</a>领取token后立马使用。
+						</p>
 					</div>
-					<div class="config-hint config-hint-warning" id="privateClientHint" style="display: none">
-						客户端环境下无法使用私服模式：私服使用自签名证书，客户端网络层不接受，请求无法送达。请改用「ARK 官网」或「自定义模型」。
+					<div class="config-item">
+						<label>连接模式：</label>
+						<div class="mode-selector">
+							<label class="mode-option" id="modeOptionPrivate"><input type="radio" name="connMode" value="private" /> 私服</label>
+							<label class="mode-option"><input type="radio" name="connMode" value="ark" /> ARK 官网</label>
+							<label class="mode-option"><input type="radio" name="connMode" value="custom" /> 自定义模型</label>
+						</div>
+						<div class="config-hint config-hint-warning" id="privateClientHint" style="display: none">
+							客户端环境下无法使用私服模式：私服使用自签名证书，客户端网络层不接受，请求无法送达。请改用「ARK 官网」或「自定义模型」。
+						</div>
+					</div>
+					<div class="config-item private-only" id="privateServerUrlContainer">
+						<label for="privateServerUrlInput">服务器地址:</label>
+						<input type="text" id="privateServerUrlInput" class="config-input" placeholder="https://113.46.209.138" />
+					</div>
+					<div class="config-item" id="arkApiKeyContainer">
+						<label for="arkApiKeyInput">API Key:</label>
+						<input type="text" id="arkApiKeyInput" class="config-input" placeholder="私服用户API Key / ARK API Key" />
+					</div>
+					<div class="config-item" id="arkModelInputContainer">
+						<label for="arkModelInput">API Model (ARK官网):</label>
+						<input type="text" id="arkModelInput" class="config-input" placeholder="如 glm-5.2 / deepseek-v4-pro" />
+					</div>
+					<!-- 第三种模式：用户自配主流模型兼容端点（deepseek / glm 等） -->
+					<div class="config-item custom-only" id="customApiKeyContainer">
+						<label for="customApiKeyInput">自定义 API Key:</label>
+						<input type="text" id="customApiKeyInput" class="config-input" placeholder="如 sk-...（deepseek / glm 等）" />
+					</div>
+					<div class="config-item custom-only" id="customBaseUrlContainer">
+						<label for="customBaseUrlInput">Base URL:</label>
+						<input type="text" id="customBaseUrlInput" class="config-input" placeholder="https://api.deepseek.com/v1" />
+					</div>
+					<div class="config-item custom-only" id="customModelContainer">
+						<label for="customModelInput">Model:</label>
+						<input type="text" id="customModelInput" class="config-input" placeholder="如 deepseek-chat" />
+					</div>
+					<div class="config-item custom-only" id="customProtocolContainer">
+						<label for="customProtocolSelect">接口协议:</label>
+						<select id="customProtocolSelect" class="config-input">
+							<option value="responses">Responses API（火山方舟等）</option>
+							<option value="chat">Chat Completions（DeepSeek 等）</option>
+						</select>
 					</div>
 				</div>
-				<div class="config-item private-only" id="privateServerUrlContainer">
-					<label for="privateServerUrlInput">服务器地址:</label>
-					<input type="text" id="privateServerUrlInput" class="config-input" placeholder="https://113.46.209.138" />
-				</div>
-				<div class="config-item" id="arkApiKeyContainer">
-					<label for="arkApiKeyInput">API Key:</label>
-					<input type="text" id="arkApiKeyInput" class="config-input" placeholder="私服用户API Key / ARK API Key" />
-				</div>
-				<div class="config-item" id="arkModelInputContainer">
-					<label for="arkModelInput">API Model (ARK官网):</label>
-					<input type="text" id="arkModelInput" class="config-input" placeholder="如 glm-5.2 / deepseek-v4-pro" />
-				</div>
-				<!-- 第三种模式：用户自配主流模型兼容端点（deepseek / glm 等） -->
-				<div class="config-item custom-only" id="customApiKeyContainer">
-					<label for="customApiKeyInput">自定义 API Key:</label>
-					<input type="text" id="customApiKeyInput" class="config-input" placeholder="如 sk-...（deepseek / glm 等）" />
-				</div>
-				<div class="config-item custom-only" id="customBaseUrlContainer">
-					<label for="customBaseUrlInput">Base URL:</label>
-					<input type="text" id="customBaseUrlInput" class="config-input" placeholder="https://api.deepseek.com/v1" />
-				</div>
-				<div class="config-item custom-only" id="customModelContainer">
-					<label for="customModelInput">Model:</label>
-					<input type="text" id="customModelInput" class="config-input" placeholder="如 deepseek-chat" />
-				</div>
-			</div>
 				<div class="config-footer">
+					<button id="configTestBtn" class="config-cancel-btn">测试连接</button>
 					<button id="configSaveBtn" class="config-save-btn">保存</button>
 					<button id="configCancelBtn" class="config-cancel-btn">取消</button>
 				</div>
@@ -125,7 +134,9 @@
 						<button id="dmImportBtn" class="dm-btn" title="选择来源:从源码(内存常量) / 从本地文件 导入">导入</button>
 						<input type="file" id="dmImportLocalInput" accept=".json,application/json" style="display: none" />
 						<button id="dmExportBtn" class="dm-btn" title="一次导出两部分:提示词业务数据(JSON) + 函数实现源码(JS)">导出</button>
-						<button id="dmDeleteBtn" class="dm-btn dm-btn-danger" title="删除本地数据库并回退到原始 JS 数据(即恢复默认),所有修改将丢失">删除数据库</button>
+						<button id="dmDeleteBtn" class="dm-btn dm-btn-danger" title="删除本地数据库并回退到原始 JS 数据(即恢复默认),所有修改将丢失">
+							删除数据库
+						</button>
 						<button id="dmCloseBtn" class="dm-close-btn" title="关闭">×</button>
 					</div>
 				</div>
@@ -134,9 +145,9 @@
 				<!-- 搜索与列表工具栏 -->
 				<div class="dm-toolbar">
 					<input id="dmSearchInput" class="dm-search" type="text" placeholder="搜索 name / description..." />
-						<button id="dmAddToolBtn" class="dm-btn" style="display: none" title="新增自定义精选工具/提示词">新增</button>
-						<button id="dmClearLogBtn" class="dm-btn" style="display: none" title="清空全部会话与调用日志(仅删日志表)">清空日志</button>
-					</div>
+					<button id="dmAddToolBtn" class="dm-btn" style="display: none" title="新增自定义精选工具/提示词">新增</button>
+					<button id="dmClearLogBtn" class="dm-btn" style="display: none" title="清空全部会话与调用日志(仅删日志表)">清空日志</button>
+				</div>
 				<!-- 主体：左侧条目列表 + 右侧编辑面板 -->
 				<div class="dm-body">
 					<div class="dm-list-wrap">

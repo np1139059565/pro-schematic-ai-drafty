@@ -49,6 +49,9 @@ let privateServerUrlContainer; // 私服服务器地址配置项容器（仅私�
 let privateServerUrlInput; // 私服服务器地址输入框
 let customApiKeyContainer; // 自定义 API Key 配置项容器
 let customBaseUrlContainer; // 自定义 Base URL 配置项容器
+let configTestBtn; // 测试连接按钮
+let customProtocolContainer; // 自定义接口协议配置项容器
+let customProtocolSelect; // 自定义接口协议下拉框(responses/chat)
 let customModelContainer; // 自定义 Model 配置项容器
 let modelInfoEl; // 状态栏「当前模型」展示位
 let packageInfoEl; // 状态栏「已领取套餐」展示位
@@ -73,24 +76,21 @@ let activeApiPromises = new Set(); // 追踪正在执行的 API Promise
 
 // 界面状态枚举
 const UI_STATE = {
-	IDLE: 'idle',           // 空闲状态
-	SENDING: 'sending',     // 发送中
-	STOPPED: 'stopped',     // 已停止
-	EXECUTING: 'executing'  // 代码执行中
+	IDLE: 'idle', // 空闲状态
+	SENDING: 'sending', // 发送中
+	STOPPED: 'stopped', // 已停止
+	EXECUTING: 'executing', // 代码执行中
 };
 
 let currentUIState = UI_STATE.IDLE; // 当前界面状态
 let pendingConfirmation = false; // 是否存在等待用户确认执行的代码块(待确认态)
-
 
 // 系统消息 - 用于描述 AI 角色和职责，用户可以在控制台临时修改系统消息，对 AI 巧绘进行定制化
 // 取出时还原 @name 引用标记为裸 name，保证送入模型的文本与标记化前逐字节一致（详见《系统设计说明》§4.5「@引用 标记与还原」）
 // 系统消息承载于 prompt_index 提示词（全局索引），而非旧版的 system_message
 // 系统消息的唯一写入口为 applySystemMessage(见下方定义):既更新 window.top.systemMessage,
 // 又同步替换会话历史中的 system 消息,保证单一所有权、避免与 data-store.js 重复直写失步。
-applySystemMessage(window.dataStore.stripRefMarks(
-	window.promptList.find(prompt => prompt.name === 'prompt_index').messages[0].content.text || ''
-));
+applySystemMessage(window.dataStore.stripRefMarks(window.promptList.find((prompt) => prompt.name === 'prompt_index').messages[0].content.text || ''));
 
 /**
  * 应用新的系统消息并即时生效
@@ -148,8 +148,13 @@ let currentTurn = 0;
 
 /** 是否启用日志写入(仅数据库激活且 dataStore 提供日志 API 时) */
 function isLoggingEnabled() {
-	return !!(window.dataStore && window.dataStore.isActivated && window.dataStore.isActivated()
-		&& window.dataStore.createSession && window.dataStore.appendLog);
+	return !!(
+		window.dataStore &&
+		window.dataStore.isActivated &&
+		window.dataStore.isActivated() &&
+		window.dataStore.createSession &&
+		window.dataStore.appendLog
+	);
 }
 
 /** 新建日志会话(每次用户发送消息时调用;标题取首句前 20 字) */
@@ -173,7 +178,7 @@ function writeChatLog(requestPayload) {
 		requestPayload: JSON.stringify(requestPayload),
 		promptSnapshot: window.top.systemMessage, // 系统消息快照(字符串)
 		// 工具描述快照优先取接口真实 tools(真实接口数据),缺失时降级到前端镜像(元工具清单)
-		toolSnapshot: JSON.stringify((requestPayload && requestPayload.tools) || collectToolDescriptions() || [])
+		toolSnapshot: JSON.stringify((requestPayload && requestPayload.tools) || collectToolDescriptions() || []),
 	});
 }
 
@@ -289,6 +294,9 @@ function init() {
 	customModelInput = document.getElementById('customModelInput'); // 获取自定义 Model 输入框
 	customApiKeyContainer = document.getElementById('customApiKeyContainer'); // 获取自定义 API Key 配置项容器
 	customBaseUrlContainer = document.getElementById('customBaseUrlContainer'); // 获取自定义 Base URL 配置项容器
+	configTestBtn = document.getElementById('configTestBtn'); // 获取测试连接按钮
+	customProtocolContainer = document.getElementById('customProtocolContainer'); // 获取自定义接口协议配置项容器
+	customProtocolSelect = document.getElementById('customProtocolSelect'); // 获取自定义接口协议下拉框
 	customModelContainer = document.getElementById('customModelContainer'); // 获取自定义 Model 配置项容器
 	privateServerUrlInput = document.getElementById('privateServerUrlInput'); // 获取私服服务器地址输入框
 	privateServerUrlContainer = document.getElementById('privateServerUrlContainer'); // 获取私服服务器地址配置项容器
@@ -304,6 +312,7 @@ function init() {
 	configBtn.addEventListener('click', handleConfigClick); // 配置按钮点击事件
 	configCloseBtn.addEventListener('click', handleCloseConfig); // 配置关闭按钮点击事件
 	configSaveBtn.addEventListener('click', handleSaveConfig); // 配置保存按钮点击事件
+	if (configTestBtn) configTestBtn.addEventListener('click', handleTestConnection); // 配置测试连接按钮点击事件
 	configCancelBtn.addEventListener('click', handleCloseConfig); // 配置取消按钮点击事件
 	// 点击遮罩层关闭对话框
 	configDialog.querySelector('.config-overlay').addEventListener('click', handleCloseConfig); // 遮罩层点击事件
@@ -350,7 +359,6 @@ function init() {
 	enforceClientPrivateModePolicy();
 }
 
-
 /**
  * 统一更新界面状态
  * @param {string} state - 目标状态 (UI_STATE.IDLE | UI_STATE.SENDING | UI_STATE.STOPPED | UI_STATE.EXECUTING)
@@ -360,9 +368,11 @@ function updateUIState(state) {
 
 	switch (state) {
 		case UI_STATE.IDLE:
-			// 空闲状态：可发送消息、可清空、可配置、停止按钮隐藏
+			// 空闲状态：可发送消息、可清空、可配置
+			// 待确认态保护:存在等待确认的代码块时保持停止按钮可见,
+			// 避免「停止被隐藏 + 清空被 pendingConfirmation 拦截」形成死锁
 			setInputDisabled(false); // 启用输入框和发送按钮
-			stopBtn.style.display = 'none'; // 隐藏停止按钮
+			stopBtn.style.display = pendingConfirmation ? 'block' : 'none'; // 待确认态保持停止按钮可见
 			clearBtn.disabled = false; // 启用清空按钮
 			autoExecWriteCheckbox.disabled = false; // 启用自动执行复选框
 			configBtn.disabled = false; // 启用配置按钮
@@ -398,8 +408,6 @@ function updateUIState(state) {
 			break;
 	}
 }
-
-
 
 /**
  * 添加 AI 回复到对话历史
@@ -474,8 +482,8 @@ function extractMessageContent(item) {
 	if (item.content && Array.isArray(item.content)) {
 		// content 是数组格式
 		return item.content
-			.filter(c => c.type === 'output_text') // 过滤文本类型
-			.map(c => c.text) // 提取文本
+			.filter((c) => c.type === 'output_text') // 过滤文本类型
+			.map((c) => c.text) // 提取文本
 			.join(''); // 拼接文本
 	} else if (typeof item.content === 'string') {
 		// content 是字符串格式
@@ -494,9 +502,7 @@ function extractToolCall(item) {
 		id: item.call_id || item.id, // 工具调用 ID
 		function: {
 			name: item.name, // 函数名称
-			arguments: typeof item.arguments === 'string'
-				? item.arguments
-				: JSON.stringify(item.arguments || {}), // 参数（JSON 字符串）
+			arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}), // 参数（JSON 字符串）
 		},
 	}; // 返回工具调用对象
 }
@@ -567,11 +573,15 @@ function generateCodeFromToolCalls(toolCalls) {
 		// 生成工具调用代码
 		if (toolCalls.length === 1) {
 			// 单个工具调用
-			codeLines.push(`const result = await mcpProtocol.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`); // 调用工具
+			codeLines.push(
+				`const result = await mcpProtocol.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`,
+			); // 调用工具
 			codeLines.push('resp.data = result;'); // 设置结果
 		} else {
 			// 多个工具调用
-			codeLines.push(`const result${i} = await mcpProtocol.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`); // 调用工具
+			codeLines.push(
+				`const result${i} = await mcpProtocol.callTool({ name: '${toolName}', arguments: ${JSON.stringify(argumentsObj, null, 2)} });`,
+			); // 调用工具
 			if (i === toolCalls.length - 1) {
 				// 最后一个工具调用，设置结果
 				codeLines.push(`resp.data = [${Array.from({ length: toolCalls.length }, (_, idx) => `result${idx}`).join(', ')}];`); // 设置结果数组
@@ -664,9 +674,8 @@ async function executeToolCalls(toolCalls) {
  * @returns {Array|null} 元工具描述数组;无可用工具时返回 null
  */
 function collectToolDescriptions() {
-	const metaTools = (window.mcpProtocol && Array.isArray(window.mcpProtocol.metaToolSchemas))
-		? window.mcpProtocol.metaToolSchemas : [];
-	const tools = metaTools.filter(tool => tool && tool.enabled !== false);
+	const metaTools = window.mcpProtocol && Array.isArray(window.mcpProtocol.metaToolSchemas) ? window.mcpProtocol.metaToolSchemas : [];
+	const tools = metaTools.filter((tool) => tool && tool.enabled !== false);
 	return tools.length > 0 ? tools : null;
 }
 
@@ -804,16 +813,21 @@ function refreshModelInfo() {
 	if (!modelInfoEl) return;
 	if (connectionMode === 'private') {
 		const apiKey = localStorage.getItem('api_key') || '';
-		if (!apiKey) { modelInfoEl.textContent = '模型: 未登录'; return; }
+		if (!apiKey) {
+			modelInfoEl.textContent = '模型: 未登录';
+			return;
+		}
 		fetch(`${getPrivateServerUrl()}/api/model-info?user_api_key=${encodeURIComponent(apiKey)}`)
-			.then(r => r.json().catch(() => ({})))
-			.then(d => { modelInfoEl.textContent = (d && d.model) ? `模型: ${d.model}` : '模型: 未知'; })
-			.catch(() => { modelInfoEl.textContent = '模型: 未知'; });
+			.then((r) => r.json().catch(() => ({})))
+			.then((d) => {
+				modelInfoEl.textContent = d && d.model ? `模型: ${d.model}` : '模型: 未知';
+			})
+			.catch(() => {
+				modelInfoEl.textContent = '模型: 未知';
+			});
 	} else {
 		// 非私服模式本地即可得知模型，无需请求
-		const localModel = connectionMode === 'custom'
-			? (localStorage.getItem('custom_model') || '')
-			: (localStorage.getItem('api_model') || '');
+		const localModel = connectionMode === 'custom' ? localStorage.getItem('custom_model') || '' : localStorage.getItem('api_model') || '';
 		modelInfoEl.textContent = localModel ? `模型: ${localModel}` : '模型: 未配置';
 	}
 }
@@ -825,17 +839,28 @@ function refreshModelInfo() {
  */
 function refreshPackageInfo() {
 	if (!packageInfoEl) return;
-	if (connectionMode !== 'private') { packageInfoEl.textContent = ''; return; }
+	if (connectionMode !== 'private') {
+		packageInfoEl.textContent = '';
+		return;
+	}
 	const apiKey = localStorage.getItem('api_key') || '';
-	if (!apiKey) { packageInfoEl.textContent = ''; return; }
+	if (!apiKey) {
+		packageInfoEl.textContent = '';
+		return;
+	}
 	fetch(`${getPrivateServerUrl()}/api/user/package?user_api_key=${encodeURIComponent(apiKey)}`)
-		.then(r => r.json().catch(() => ({})))
-		.then(d => {
-			if (!d || !d.claimed) { packageInfoEl.textContent = ''; return; }
+		.then((r) => r.json().catch(() => ({})))
+		.then((d) => {
+			if (!d || !d.claimed) {
+				packageInfoEl.textContent = '';
+				return;
+			}
 			const splitNote = d.is_admin_free_split ? '（管理员免费额度拆分）' : '';
 			packageInfoEl.textContent = `套餐: ${d.model || '未知'} · 剩余 ${d.remaining}${splitNote}`;
 		})
-		.catch(() => { packageInfoEl.textContent = ''; });
+		.catch(() => {
+			packageInfoEl.textContent = '';
+		});
 }
 
 /**
@@ -876,7 +901,10 @@ function handleFaultReport(error) {
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ user_api_key: apiKey, content, msg_type: 'text' }),
 	})
-		.then(r => { if (!r.ok) throw new Error('status ' + r.status); return r.json(); })
+		.then((r) => {
+			if (!r.ok) throw new Error('status ' + r.status);
+			return r.json();
+		})
 		.then(() => {
 			alert('已上报给管理员。\n您可在普通用户页面的「客服」入口查看管理员回复。');
 		})
@@ -886,7 +914,6 @@ function handleFaultReport(error) {
 }
 
 async function callAIAndHandleResponse() {
-
 	// 确保系统消息在对话历史中
 	const isAddTool = ensureSystemMessage(); // 确保系统消息存在
 
@@ -895,10 +922,16 @@ async function callAIAndHandleResponse() {
 	let chatLogId;
 	try {
 		// 根据配置选择调用 ARK API 或私服 API
-		apiPromise =
-			getChatCaller()(
-				conversationHistory, previousResponseId, isAddTool ? collectToolDescriptions() : null,
-				window.AbortManager.createTimeoutSignal(180000)); // 调用 API(绑定 180s 超时+手动取消信号)
+		// Chat Completions 为无状态协议:每一轮都必须携带工具描述,
+		// 否则第 2 轮起模型丢失工具能力(服务端无缓存续接),历史含 tool 消息时还可能被服务端拒绝;
+		// Responses 协议维持原有「首轮注入,后续靠服务端缓存续接」的渐进策略不变
+		const ccMode = window.ArkAPI.isCustomChatProtocol();
+		apiPromise = getChatCaller()(
+			conversationHistory,
+			previousResponseId,
+			isAddTool || ccMode ? collectToolDescriptions() : null,
+			window.AbortManager.createTimeoutSignal(180000),
+		); // 调用 API(绑定 180s 超时+手动取消信号)
 
 		// 追踪 API Promise
 		activeApiPromises.add(apiPromise); // 添加到追踪集合
@@ -913,13 +946,16 @@ async function callAIAndHandleResponse() {
 		activeApiPromises.delete(apiPromise); // 移除追踪
 		// 累加 total_tokens(加空值保护,响应缺 usage 时不抛异常)
 		totalTokensAccumulated += (response.data.usage && response.data.usage.total_tokens) || 0; // 累加 tokens
-		console.info(`total_tokens 累计：${totalTokensAccumulated}`, 'history', conversationHistory);//打印对话历史和累计 tokens
+		console.info(`total_tokens 累计：${totalTokensAccumulated}`, 'history', conversationHistory); //打印对话历史和累计 tokens
 		refreshStatusToken(); // 刷新状态栏 token 消耗统计(并入 statusText)
 		// 私服模式下异步上报本次 Token 消耗（best-effort，不影响对话）
-		reportTokenUsage(usageModelName(), (response.data.usage && response.data.usage.total_tokens) || 0,
+		reportTokenUsage(
+			usageModelName(),
+			(response.data.usage && response.data.usage.total_tokens) || 0,
 			(response.data.usage && response.data.usage.input_tokens) || 0,
 			(response.data.usage && response.data.usage.output_tokens) || 0,
-			currentSessionId || '');
+			currentSessionId || '',
+		);
 
 		// 解析 AI 回复
 		const parsedResponse = parseAIResponse(response.data); // 解析响应
@@ -957,9 +993,7 @@ async function callAIAndHandleResponse() {
 		}
 		throw error; // 重新抛出错误
 	}
-
 }
-
 
 /**
  * 创建工具调用代码块（等待用户确认执行）
@@ -1087,13 +1121,13 @@ async function executeEditedCode(codeText, codeContainer, button, toolCalls) {
 		// 兼容字段：tool_call_id（用于回传 Responses API 的 call_id）、content、isError
 		// 若工具本身返回 errorMessage（执行层面的业务错误），同样标记为 isError 以回喂模型自愈
 		const hasToolError = !!(resp && resp.errorMessage); // 工具是否返回业务错误
-		const wrappedResults = [{
-			tool_call_id: (toolCalls[0] && toolCalls[0].id) || 'edited', // 回退使用原始首个调用 ID
-			content: hasToolError
-				? `❌ ${resp.errorMessage}`
-				: (resp ? JSON.stringify(resp.data, null, 2) : '(无返回)'), // 结果文本
-			isError: hasToolError, // 是否出错
-		}]; // 包装结果
+		const wrappedResults = [
+			{
+				tool_call_id: (toolCalls[0] && toolCalls[0].id) || 'edited', // 回退使用原始首个调用 ID
+				content: hasToolError ? `❌ ${resp.errorMessage}` : resp ? JSON.stringify(resp.data, null, 2) : '(无返回)', // 结果文本
+				isError: hasToolError, // 是否出错
+			},
+		]; // 包装结果
 
 		// 复用原生结果处理与后续对话流程
 		const toolInputMessages = handleToolExecutionResults(wrappedResults, codeContainer, button); // 处理结果
@@ -1103,11 +1137,13 @@ async function executeEditedCode(codeText, codeContainer, button, toolCalls) {
 		// 不走通用的"网络/AI 错误"提示（那只会显示无入口的"重新发送"文案并终止对话），
 		// 而是复用 ErrorHandler.toToolError 把错误包装为工具执行结果，回喂模型让其自愈。
 		const toolError = window.ErrorHandler.toToolError(error); // 归类为工具错误结果
-		const wrappedResults = [{
-			tool_call_id: (toolCalls[0] && toolCalls[0].id) || 'edited', // 回退使用原始首个调用 ID
-			content: `❌ ${toolError.message}`, // 错误描述
-			isError: true, // 标记为错误
-		}]; // 包装错误结果
+		const wrappedResults = [
+			{
+				tool_call_id: (toolCalls[0] && toolCalls[0].id) || 'edited', // 回退使用原始首个调用 ID
+				content: `❌ ${toolError.message}`, // 错误描述
+				isError: true, // 标记为错误
+			},
+		]; // 包装错误结果
 		const toolInputMessages = handleToolExecutionResults(wrappedResults, codeContainer, button); // 展示错误结果
 		updateStatus('代码执行出错，已回喂模型尝试自愈', 'error'); // 状态栏提示自愈中
 		// 把错误作为 function_call_output 回喂模型，模型据此修正后通常会再次返回可执行的代码块
@@ -1175,12 +1211,17 @@ async function continueConversationAfterTools(toolInputMessages) {
 	let apiPromise;
 	let chatLogId;
 	try {
-		// 根据配置选择调用 ARK API 或私服 API
-		apiPromise = window.ArkAPI[usePrivateServer ? 'callPrivateChat' : 'callArkChat'](
-			toolInputMessages, // 工具执行结果（作为 input 传入）
-			previousResponseId, // 上一轮响应 ID
-			null, // 无新增工具
-			window.AbortManager.createTimeoutSignal(180000) // 绑定 180s 超时+手动取消信号
+		// 按当前连接模式统一收口选择对话通道(private/ark/custom 三态),
+		// 避免自定义模式在工具循环中走错 ARK 官网端点
+		// Chat Completions 为无状态协议:工具结果轮必须传完整会话历史
+		// (此时 conversationHistory 已含 assistant.toolCalls 与 role:'tool' 结果),
+		// 由适配层 convertHistoryToCCMessages 统一转换;Responses 协议仍传增量批次
+		const payload = window.ArkAPI.isCustomChatProtocol() ? conversationHistory : toolInputMessages;
+		apiPromise = getChatCaller()(
+			payload, // CC: 完整历史;Responses: 工具执行结果增量批次
+			previousResponseId, // 上一轮响应 ID(CC 模式不依赖,仅 Responses 使用)
+			window.ArkAPI.isCustomChatProtocol() ? collectToolDescriptions() : null, // CC 无状态每轮必带工具,Responses 靠服务端缓存续接无需重传
+			window.AbortManager.createTimeoutSignal(180000), // 绑定 180s 超时+手动取消信号
 		); // 调用 API
 
 		// 追踪 API Promise
@@ -1197,13 +1238,16 @@ async function continueConversationAfterTools(toolInputMessages) {
 
 		// 累加 total_tokens(加空值保护,响应缺 usage 时不抛异常)
 		totalTokensAccumulated += (response.data.usage && response.data.usage.total_tokens) || 0; // 累加 tokens
-		console.info('history', conversationHistory, `total_tokens 累计：${totalTokensAccumulated}`);//打印对话历史和累计 tokens
+		console.info('history', conversationHistory, `total_tokens 累计：${totalTokensAccumulated}`); //打印对话历史和累计 tokens
 		refreshStatusToken(); // 刷新状态栏 token 消耗统计(并入 statusText)
 		// 私服模式下异步上报本次 Token 消耗（best-effort，不影响对话）
-		reportTokenUsage(usageModelName(), (response.data.usage && response.data.usage.total_tokens) || 0,
+		reportTokenUsage(
+			usageModelName(),
+			(response.data.usage && response.data.usage.total_tokens) || 0,
 			(response.data.usage && response.data.usage.input_tokens) || 0,
 			(response.data.usage && response.data.usage.output_tokens) || 0,
-			currentSessionId || '');
+			currentSessionId || '',
+		);
 
 		// 解析响应
 		const parsedResponse = parseAIResponse(response.data); // 解析响应
@@ -1240,8 +1284,6 @@ async function continueConversationAfterTools(toolInputMessages) {
 		}
 		throw error; // 重新抛出错误
 	}
-
-
 }
 
 /**
@@ -1297,10 +1339,7 @@ function handleAIError(error, errorPrefix = 'AI 请求失败', onResend = null) 
 	// 注意:info.message 已经是透传后的唯一、明确真实原因(后台/底层具体错误文本),
 	// 因此此处不再追加独立的"真实原因"行,避免把通用引导与真实原因并排展示,
 	// 造成用户困惑、原因不唯一。整段提示保持"唯一原因 + 一条可操作建议"。
-	const guideText =
-		`❌ ${info.title}\n` +
-		`${info.message}\n` +
-		`💡 ${info.action}`; // 恢复引导
+	const guideText = `❌ ${info.title}\n` + `${info.message}\n` + `💡 ${info.action}`; // 恢复引导
 
 	// 错误提示必须无条件渲染到界面(最优先,任何后续逻辑异常都不影响它显示)
 	const messageDiv = addMessageToChat('assistant', guideText, true); // 添加结构化错误提示
@@ -1357,8 +1396,6 @@ function handleAIError(error, errorPrefix = 'AI 请求失败', onResend = null) 
 	}
 }
 
-
-
 /**
  * 处理发送消息按钮点击事件
  */
@@ -1409,7 +1446,6 @@ async function handleSendMessage() {
 	}); // 运行统一流程
 }
 
-
 /**
  * 处理停止按钮点击事件
  * 经 AbortManager.abortCurrent() 真正中断底层 fetch(而非仅置标志位),
@@ -1422,7 +1458,7 @@ function handleStop() {
 	if (pendingConfirmation) {
 		pendingConfirmation = false; // 清除待确认态标记
 		// 移除所有仍处于待确认(未禁用)的代码块容器
-		document.querySelectorAll('.code-confirm-btn:not(:disabled)').forEach(btn => {
+		document.querySelectorAll('.code-confirm-btn:not(:disabled)').forEach((btn) => {
 			const container = btn.closest('.code-block-container'); // 定位外层容器
 			if (container && container.parentNode) container.parentNode.removeChild(container); // 移除
 		});
@@ -1434,7 +1470,7 @@ function handleStop() {
 	window.AbortManager.abortCurrent();
 
 	// 取消所有正在执行的 setTimeout(如自动执行延时)
-	activeTimeouts.forEach(timeoutId => {
+	activeTimeouts.forEach((timeoutId) => {
 		clearTimeout(timeoutId); // 清除定时器
 	});
 
@@ -1472,9 +1508,7 @@ function resumeStop() {
 function setInputDisabled(disabled) {
 	messageInput.disabled = disabled; // 设置输入框状态
 	sendBtn.disabled = disabled; // 设置发送按钮状态
-
 }
-
 
 /**
  * 添加消息到对话界面
@@ -1562,7 +1596,6 @@ function removeLoadingIndicator() {
 	}
 }
 
-
 /**
  * 确保系统消息在对话历史中
  * 如果没有系统消息则添加到对话历史开头
@@ -1576,14 +1609,12 @@ function ensureSystemMessage() {
 
 	conversationHistory.unshift({
 		role: 'system',
-		content: window.top.systemMessage
+		content: window.top.systemMessage,
 	});
-
 
 	console.log('已添加系统消息到对话历史'); // 输出日志
 	return true;
 }
-
 
 /**
  * 统一的发送流程封装，减少重复代码
@@ -1632,8 +1663,6 @@ async function runSendFlow({
 		messageInput.focus(); // 聚焦输入框
 	}
 }
-
-
 
 /**
  * 重置对话记录（清空页面消息与本地历史）
@@ -1692,8 +1721,6 @@ function handleClearChat() {
 	}, 2000); // 2 秒后清空
 }
 
-
-
 /**
  * 更新状态文本
  * @param text - 状态文本
@@ -1719,9 +1746,7 @@ function updateStatus(text, type = '') {
  */
 function buildStatusText(text) {
 	const base = text || '';
-	return totalTokensAccumulated > 0
-		? `${base} · 已用 ${totalTokensAccumulated} tokens`
-		: base;
+	return totalTokensAccumulated > 0 ? `${base} · 已用 ${totalTokensAccumulated} tokens` : base;
 }
 
 /**
@@ -1780,15 +1805,16 @@ function loadConfig() {
  * @param {string} mode - 连接模式
  */
 function applyModeVisibility(mode) {
-	const showArkKey = (mode === 'private' || mode === 'ark'); // 私服/ARK 均需 API Key
-	const showArkModel = (mode === 'ark'); // 仅 ARK 官网需填 Model
-	const showCustom = (mode === 'custom'); // 自定义模式专属三项
+	const showArkKey = mode === 'private' || mode === 'ark'; // 私服/ARK 均需 API Key
+	const showArkModel = mode === 'ark'; // 仅 ARK 官网需填 Model
+	const showCustom = mode === 'custom'; // 自定义模式专属三项
 	if (arkApiKeyContainer) arkApiKeyContainer.style.display = showArkKey ? 'block' : 'none';
 	if (arkModelInputContainer) arkModelInputContainer.style.display = showArkModel ? 'block' : 'none';
 	if (customApiKeyContainer) customApiKeyContainer.style.display = showCustom ? 'block' : 'none';
 	if (customBaseUrlContainer) customBaseUrlContainer.style.display = showCustom ? 'block' : 'none';
+	if (customProtocolContainer) customProtocolContainer.style.display = showCustom ? 'block' : 'none'; // 接口协议仅自定义模式可见
 	if (customModelContainer) customModelContainer.style.display = showCustom ? 'block' : 'none';
-	if (privateServerUrlContainer) privateServerUrlContainer.style.display = (mode === 'private') ? 'block' : 'none'; // 仅私服模式显示服务器地址
+	if (privateServerUrlContainer) privateServerUrlContainer.style.display = mode === 'private' ? 'block' : 'none'; // 仅私服模式显示服务器地址
 }
 
 /**
@@ -1802,7 +1828,7 @@ function handleConnectionModeChange() {
 	if (newMode !== connectionMode) {
 		// 连接模式真正改变，立即清空页面记录
 		connectionMode = newMode; // 更新连接模式
-		usePrivateServer = (newMode === 'private'); // 派生旧布尔
+		usePrivateServer = newMode === 'private'; // 派生旧布尔
 		resetConversationRecords(); // 清空对话记录，避免旧历史被 AI 误识别
 	}
 	applyModeVisibility(newMode); // 按模式显隐配置项
@@ -1834,13 +1860,16 @@ function handleConfigClick() {
 	customApiKeyInput.value = customKey; // 设置自定义 API Key
 	customBaseUrlInput.value = customBaseUrl; // 设置自定义 Base URL
 	customModelInput.value = customModel; // 设置自定义 Model
+	// 回显自定义接口协议(缺省 Responses API)
+	const savedProtocol = localStorage.getItem('custom_api_protocol') || 'responses';
+	if (customProtocolSelect) customProtocolSelect.value = savedProtocol;
 	privateServerUrlInput.value = currentPrivateServerUrl; // 设置私服服务器地址
 
 	// 选中对应模式 radio（仅同步界面，不触发清空）
 	const radio = document.querySelector(`input[name="connMode"][value="${mode}"]`);
 	if (radio) radio.checked = true; // 选中当前模式
 	connectionMode = mode; // 更新全局连接模式
-	usePrivateServer = (mode === 'private'); // 派生旧布尔
+	usePrivateServer = mode === 'private'; // 派生旧布尔
 	applyModeVisibility(mode); // 按模式显隐配置项
 
 	// 显示配置对话框
@@ -1850,6 +1879,46 @@ function handleConfigClick() {
 /**
  * 关闭配置对话框
  */
+/**
+ * 处理测试连接按钮点击事件
+ * 以对话框表单当前值(可能尚未保存)发起一次轻量真实请求,校验配置有效性;
+ * 按当前所选模式自动路由到对应端点与协议,结果通过按钮文案反馈
+ */
+async function handleTestConnection() {
+	if (!configTestBtn) return;
+	const prevText = configTestBtn.textContent; // 记录按钮原文案,测试后恢复
+	const modeRadio = document.querySelector('input[name="connMode"]:checked'); // 当前所选连接模式
+	const mode = modeRadio ? modeRadio.value : 'private';
+	const opts = {
+		mode,
+		key: (mode === 'custom' ? customApiKeyInput.value : arkApiKeyInput.value).trim(), // 按模式取对应 Key 输入框
+		model: (mode === 'custom' ? customModelInput.value : arkModelInput.value).trim(), // 按模式取对应 Model 输入框
+		baseUrl: customBaseUrlInput.value.trim(),
+		protocol: customProtocolSelect ? customProtocolSelect.value : 'responses', // 自定义模式接口协议
+		serverUrl: privateServerUrlInput.value.trim(), // 私服地址(留空走默认)
+	};
+	configTestBtn.disabled = true; // 防重复点击
+	configTestBtn.textContent = '测试中...';
+	try {
+		const result = await window.ArkAPI.testConnection(opts); // 发起轻量连通性测试
+		if (result.ok) {
+			configTestBtn.textContent = '连接成功';
+			updateStatus(`测试连接成功${result.detail ? ' · ' + result.detail : ''}`, 'success'); // 状态栏同步提示
+		} else {
+			configTestBtn.textContent = '连接失败';
+			alert('测试连接失败:\n' + result.message); // 弹窗展示服务端真实错误原因
+		}
+	} catch (error) {
+		configTestBtn.textContent = '连接失败';
+		alert('测试连接失败:\n' + (error && error.message ? error.message : String(error)));
+	} finally {
+		configTestBtn.disabled = false;
+		setTimeout(() => {
+			configTestBtn.textContent = prevText;
+		}, 2500); // 2.5s 后恢复按钮原文案
+	}
+}
+
 function handleCloseConfig() {
 	// 隐藏配置对话框
 	configDialog.style.display = 'none'; // 隐藏对话框
@@ -1875,11 +1944,12 @@ function handleSaveConfig() {
 			return; // 阻止保存私服配置
 		}
 		// 私服模式 model 为空；ARK 官网模式取 API Model；自定义模式 model 由专属字段承载
-		const model = (newMode === 'private') ? '' : arkModelInput.value.trim();
+		const model = newMode === 'private' ? '' : arkModelInput.value.trim();
 		const customKey = customApiKeyInput.value.trim(); // 自定义 API Key
 		const customBaseUrl = customBaseUrlInput.value.trim(); // 自定义 Base URL
 		const customModel = customModelInput.value.trim(); // 自定义 Model
-	const privateServerUrl = privateServerUrlInput.value.trim(); // 私服服务器地址
+		const customProtocol = customProtocolSelect ? customProtocolSelect.value : 'responses'; // 自定义接口协议 responses | chat
+		const privateServerUrl = privateServerUrlInput.value.trim(); // 私服服务器地址
 
 		// 与已保存配置对比，检测是否真正发生修改（含模式与自定义字段）
 		const savedApiKey = localStorage.getItem('api_key') || ''; // 读取已保存的 API Key
@@ -1888,6 +1958,7 @@ function handleSaveConfig() {
 		const savedCustomKey = localStorage.getItem('custom_api_key') || ''; // 已保存自定义 Key
 		const savedCustomBaseUrl = localStorage.getItem('custom_base_url') || ''; // 已保存自定义 Base URL
 		const savedCustomModel = localStorage.getItem('custom_model') || ''; // 已保存自定义 Model
+		const savedCustomProtocol = localStorage.getItem('custom_api_protocol') || 'responses'; // 已保存接口协议
 
 		const configChanged =
 			apiKey !== savedApiKey || // API Key 变化
@@ -1895,7 +1966,8 @@ function handleSaveConfig() {
 			newMode !== savedMode || // 连接模式变化（切换 API 类型）
 			customKey !== savedCustomKey || // 自定义 Key 变化
 			customBaseUrl !== savedCustomBaseUrl || // 自定义 Base URL 变化
-			customModel !== savedCustomModel; // 自定义 Model 变化
+			customModel !== savedCustomModel || // 自定义 Model 变化
+			customProtocol !== savedCustomProtocol; // 接口协议变化(两协议请求/响应结构不同,须清空历史)
 
 		// 修改 API 后清空页面记录，避免旧历史被不同服务端返回的上下文污染
 		if (configChanged) {
@@ -1904,13 +1976,13 @@ function handleSaveConfig() {
 
 		// 同步全局连接模式（确保后续请求使用最新的 API 类型）
 		connectionMode = newMode; // 更新连接模式
-		usePrivateServer = (newMode === 'private'); // 派生旧布尔
+		usePrivateServer = newMode === 'private'; // 派生旧布尔
 
 		// 持久化：私服开关标记（与 model 联动）+ 核心两项 + 模式与自定义字段
 		localStorage.setItem('use_private_server', String(newMode === 'private')); // 保存私服标记
-	localStorage.setItem('private_server_url', privateServerUrl); // 保存私服服务器地址
+		localStorage.setItem('private_server_url', privateServerUrl); // 保存私服服务器地址
 		window.ArkAPI.updateConfig(apiKey, model); // 更新核心配置
-		window.ArkAPI.updateConnectionConfig(newMode, customKey, customBaseUrl, customModel); // 更新模式与自定义配置
+		window.ArkAPI.updateConnectionConfig(newMode, customKey, customBaseUrl, customModel, customProtocol); // 更新模式/自定义字段/接口协议
 
 		// 关闭配置对话框
 		handleCloseConfig(); // 关闭对话框
