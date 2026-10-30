@@ -57,6 +57,70 @@ function shouldRetryWithoutPrevId(error) {
 }
 
 /**
+ * 把本地对话历史转换为方舟 Responses API 的标准 input 结构(无状态全量形态专用)。
+ * 背景:本地历史中 AI 工具调用存为 {role:'assistant', toolCalls}、工具结果存为
+ * {role:'tool', tool_call_id}(项目自定义结构,存储续接形态从不整体发送故无影响);
+ * 无状态全量形态会把完整历史直接放入 input,方舟服务端要求标准 item 结构:
+ *   工具调用 -> {type:'function_call', call_id, name, arguments}
+ *   工具结果 -> {type:'function_call_output', call_id, output}
+ * 不转换将被服务端以 400 参数错误拒绝。
+ * @param {Array} history - 本地对话历史(项目自定义混合结构)
+ * @returns {Array} 方舟 Responses API 标准 input item 数组
+ */
+function convertHistoryToResponsesInput(history) {
+	if (!Array.isArray(history)) return [];
+	const input = [];
+	for (const msg of history) {
+		if (!msg || typeof msg !== 'object') continue; // 跳过脏数据
+		// 已是标准工具结果 item(function_call_output)直通
+		if (msg.type === 'function_call_output') {
+			input.push(msg);
+			continue;
+		}
+		// 工具结果(项目自定义 role:'tool') -> function_call_output
+		if (msg.role === 'tool') {
+			input.push({
+				type: 'function_call_output',
+				call_id: msg.tool_call_id || msg.call_id,
+				output: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? ''),
+			});
+			continue;
+		}
+		// AI 工具调用(项目自定义 assistant+toolCalls) -> 先文本后 function_call items
+		if (msg.role === 'assistant' && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
+			if (msg.content) input.push({ role: 'assistant', content: String(msg.content) }); // 附带文本(可能为空则省略)
+			for (const tc of msg.toolCalls) {
+				if (!tc) continue; // 跳过空工具调用
+				const callId = tc.id || tc.call_id; // 统一取 call_id
+				// 兼容两种工具调用形状:方舟 Responses 原生顶层字段 与
+				// extractToolCall 产出的 Chat Completions 形状(name/arguments 藏于 function 内)
+				const fn = tc.function || {};
+				const fnName = tc.name || fn.name;
+				// arguments 必须为合法 JSON 字符串(空串会被服务端以参数错误拒绝,兜底为空对象)
+				let args =
+					typeof (tc.arguments ?? fn.arguments) === 'string'
+						? (tc.arguments ?? fn.arguments)
+						: JSON.stringify(tc.arguments ?? fn.arguments ?? {});
+				if (!args || !args.trim()) args = '{}';
+				input.push({
+					type: 'function_call',
+					id: callId, // 方舟 Responses 规范要求 function_call item 携带 id(与 call_id 同值兜底)
+					call_id: callId,
+					name: fnName,
+					arguments: args,
+				});
+			}
+			continue;
+		}
+		// 普通角色消息(user/system/assistant 纯文本)直通
+		if (msg.role === 'user' || msg.role === 'system' || msg.role === 'assistant') {
+			input.push({ role: msg.role, content: msg.content });
+		}
+	}
+	return input;
+}
+
+/**
  * previous_response_id 失效后的自愈重试:按当前模式重建通道,以全量历史一次性发送。
  * 仅在 catch 中且 prev_id 已失效判定成立时调用,重试内部 prev_id 为 null,不会无限递归。
  * @param {Array} mhistory - 完整消息历史
@@ -69,6 +133,42 @@ function retryWithFullHistory(mhistory, tools, signal) {
 	if (mode === 'private') return callPrivateChat(mhistory, null, tools, signal, { fullHistory: true });
 	if (mode === 'custom') return callCustomChat(mhistory, null, tools, signal, { fullHistory: true });
 	return callArkChat(mhistory, null, tools, signal, { fullHistory: true }); // ark 官网直连
+}
+
+// 缓存服务不可用运行时标志:火山方舟的上下文缓存(caching 参数)与响应存储(store:true/
+// previous_response_id 续接)均依赖账号开通「缓存服务」,未开通时请求被 403
+// AccessDenied.CacheService 拒绝。一旦检测到该错误即置位,会话内后续请求直接走
+// 无状态形态(全量历史 + store:false + 无 prev_id + 不带 caching),不再重复 403。
+let storageUnavailableRuntime = false;
+
+/**
+ * 查询 ARK 官网模式是否配置为「未开启缓存服务」
+ * 未开启时插件采用无状态形态(全量历史+store:false+无 prev_id+不带 caching),
+ * 不依赖火山方舟的缓存服务,代价是每轮重复发送上下文、token 消耗增大
+ * @returns {boolean}
+ */
+function isArkCacheServiceOff() {
+	const config = getConfig();
+	return config.mode === 'ark' && localStorage.getItem('ark_cache_service') === 'off';
+}
+
+/**
+ * 集中判定当前是否应按无状态语义发请求(供 ai-chat.js 决定传参):
+ * CC 协议天然无状态 / 私服或自定义通道运行时降级(storageUnavailableRuntime) /
+ * ARK 官网模式配置为未开启缓存服务
+ * @returns {boolean}
+ */
+function isStatelessMode() {
+	return isCustomChatProtocol() || storageUnavailableRuntime || isArkCacheServiceOff();
+}
+
+/**
+ * 判断错误是否为方舟缓存服务未开通(AccessDenied.CacheService)
+ * @param {Error} error - 带 status 字段的请求错误
+ * @returns {boolean}
+ */
+function isCacheServiceDenied(error) {
+	return !!(error && error.status === 403 && /CacheService|cache service/i.test(error.message || ''));
 }
 
 /**
@@ -85,9 +185,13 @@ async function callPrivateChat(mhistory, previousResponseId = null, tools = [], 
 		// 工具结果轮传入的是 function_call_output 增量数组(每项含 type 字段),需整段发送,
 		// 否则同批多个工具调用仅回灌最后一条结果;普通对话轮取最后一条即可。
 		const isToolResultBatch = mhistory.length > 0 && mhistory[0].type !== undefined; // 判断是否为工具结果增量批次
+		// 无状态形态判定(私服通道):运行时检测到缓存服务不可用(storageUnavailableRuntime)或
+		// prev_id 失效自愈重试(fullHistory)时,全量历史一次性发送,不依赖服务端存储
+		const stateless = storageUnavailableRuntime || !!(opts && opts.fullHistory);
 		requestBody = {
-			// fullHistory 为 prev_id 失效自愈重试标记:必须整段发送完整历史恢复上下文
-			input: opts && opts.fullHistory ? mhistory : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]], // 工具结果批次整段发送,普通对话仅取最后一条
+			// fullHistory 为 prev_id 失效自愈重试标记:必须整段发送完整历史恢复上下文;
+			// 全量历史须转换为方舟标准 input 结构(自定义 toolCalls/tool 结构会被 400 拒绝)
+			input: stateless ? convertHistoryToResponsesInput(mhistory) : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]],
 		};
 		// 获取用户API Key（用于在私服中认证身份和记录token使用）
 		const config = getConfig();
@@ -100,10 +204,10 @@ async function callPrivateChat(mhistory, previousResponseId = null, tools = [], 
 		}
 		requestBody.user_api_key = config.key.trim();
 
-		// 如果有上一轮响应ID，添加到请求体中
-		if (previousResponseId) {
+		// 如果有上一轮响应ID，添加到请求体中(无状态形态不依赖服务端存储,跳过)
+		if (!stateless && previousResponseId) {
 			requestBody.previous_response_id = previousResponseId; // 添加上一轮响应ID
-		} else if (mhistory.length === 2) {
+		} else if (!stateless && mhistory.length === 2) {
 			// 如果无上一轮响应ID,则将消息历史作为输入
 			requestBody.input = mhistory;
 		}
@@ -170,6 +274,13 @@ async function callPrivateChat(mhistory, previousResponseId = null, tools = [], 
 		// 降级为「不带 prev_id + 全量历史」重试一次;工具结果批次离开 prev_id 无法
 		// 与服务端 function_call 关联,不做重试,避免自愈反而产生残缺上下文
 		const isToolResultBatch = mhistory.length > 0 && mhistory[0].type !== undefined;
+		// 方舟缓存服务未开通自动降级:私服转发方舟时可能透传 403 AccessDenied.CacheService,
+		// 置位无状态标志后以全量历史重试一次(opts.fullHistory 防止重试再次进入本分支递归)
+		if (isCacheServiceDenied(error) && !(opts && opts.fullHistory)) {
+			storageUnavailableRuntime = true;
+			console.warn('检测到方舟缓存服务未开通,自动切换无状态模式重试:', error.message);
+			return callPrivateChat(mhistory, null, tools, signal, { fullHistory: true });
+		}
 		if (previousResponseId && !isToolResultBatch && shouldRetryWithoutPrevId(error)) {
 			console.warn('previous_response_id 疑似失效,降级为全量历史重试:', error.message);
 			return retryWithFullHistory(mhistory, tools, signal);
@@ -198,13 +309,18 @@ async function callArkChat(mhistory, previousResponseId = null, tools = [], sign
 		// function_call_output 增量数组(每条含 type 字段而非 role),多条结果必须整段发送,
 		// 若只取最后一条会导致同批多个工具调用仅回灌 1 个结果,模型据此回应必然残缺。
 		const isToolResultBatch = mhistory.length > 0 && mhistory[0].type !== undefined; // 判断是否为工具结果增量批次
+		// 无状态形态判定(ARK 官网通道):配置为未开启缓存服务(isArkCacheServiceOff)或
+		// prev_id 失效自愈重试(fullHistory)时,全量历史+store:false+不携带 caching,
+		// 不依赖服务端存储与缓存服务
+		const stateless = isArkCacheServiceOff() || !!(opts && opts.fullHistory);
 		// 构建请求体
 		requestBody = {
 			// model: config.model, // 模型名称
-			// fullHistory 为 prev_id 失效自愈重试标记:必须整段发送完整历史恢复上下文
-			input: opts && opts.fullHistory ? mhistory : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]], // 工具结果批次整段发送,普通对话仅取最后一条
-			store: true, // 存储响应以便后续检索
-			caching: { 'type': 'enabled' }, // 启用缓存(设置了缓存不需要一直传入tools)
+			// fullHistory 为 prev_id 失效自愈重试标记:必须整段发送完整历史恢复上下文;
+			// 全量历史须转换为方舟标准 input 结构(自定义 toolCalls/tool 结构会被 400 拒绝)
+			input: stateless ? convertHistoryToResponsesInput(mhistory) : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]], // 工具结果批次整段发送,普通对话仅取最后一条
+			store: stateless ? false : true, // 存储响应以便后续检索(未开启缓存服务时关闭存储)
+			caching: stateless ? undefined : { 'type': 'enabled' }, // 启用缓存(设置了缓存不需要一直传入tools;未开通缓存服务时不携带该字段)
 			temperature: 0.2, // 采样温度，降低随机性，使输出更确定
 			top_p: 0.9, // 核采样概率，降低随机性，使输出更确定(通常建议仅调整 temperature 或 top_p 其中之一，不建议两者都修改)
 		};
@@ -215,10 +331,10 @@ async function callArkChat(mhistory, previousResponseId = null, tools = [], sign
 		}
 		requestBody.model = config.model;
 
-		// 如果有上一轮响应ID，添加到请求体中
-		if (previousResponseId) {
+		// 如果有上一轮响应ID，添加到请求体中(无状态形态不依赖服务端存储,跳过)
+		if (!stateless && previousResponseId) {
 			requestBody.previous_response_id = previousResponseId; // 添加上一轮响应ID
-		} else if (mhistory.length === 2) {
+		} else if (!stateless && mhistory.length === 2) {
 			// 如果无上一轮响应ID,则将消息历史作为输入
 			requestBody.input = mhistory;
 		}
@@ -267,6 +383,13 @@ async function callArkChat(mhistory, previousResponseId = null, tools = [], sign
 		// 降级为「不带 prev_id + 全量历史」重试一次;工具结果批次离开 prev_id 无法
 		// 与服务端 function_call 关联,不做重试,避免自愈反而产生残缺上下文
 		const isToolResultBatch = mhistory.length > 0 && mhistory[0].type !== undefined;
+		// 方舟缓存服务未开通(403 AccessDenied.CacheService):ARK 官网模式不做静默降级,
+		// 挂上专属错误码向上抛出,由 ai-chat.js 渲染交互式错误卡片
+		//(引导用户「去开通缓存服务」或「切换全量历史模式」)
+		if (isCacheServiceDenied(error)) {
+			error.code = 'CACHE_SERVICE_DENIED'; // 专属错误码,供上层识别渲染专属引导
+			throw error;
+		}
 		if (previousResponseId && !isToolResultBatch && shouldRetryWithoutPrevId(error)) {
 			console.warn('previous_response_id 疑似失效,降级为全量历史重试:', error.message);
 			return retryWithFullHistory(mhistory, tools, signal);
@@ -472,22 +595,24 @@ async function callCustomChat(mhistory, previousResponseId = null, tools = [], s
 	let requestBody = null;
 	try {
 		const isToolResultBatch = mhistory.length > 0 && mhistory[0].type !== undefined; // 判断是否为工具结果增量批次
-		// 复用与 callArkChat 完全一致的请求体结构（Responses API）,保证多轮/工具结果批次行为一致
+		// 无状态形态判定:同 callArkChat(缓存服务未开通降级/自愈重试),自定义端点若为方舟兼容网关同样受益
+		const stateless = storageUnavailableRuntime || !!(opts && opts.fullHistory);
+		// 复用与 callArkChat 完全一致的请求体结构（Responses API）,保证多轮/工具结果批次行为一致;
+		// 全量历史须转换为方舟标准 input 结构(自定义 toolCalls/tool 结构会被 400 拒绝)
 		requestBody = {
-			// fullHistory 为 prev_id 失效自愈重试标记:必须整段发送完整历史恢复上下文
-			input: opts && opts.fullHistory ? mhistory : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]],
-			store: true,
-			caching: { 'type': 'enabled' },
+			input: stateless ? convertHistoryToResponsesInput(mhistory) : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]],
+			store: stateless ? false : true,
+			caching: stateless ? undefined : { 'type': 'enabled' },
 			temperature: 0.2,
 			top_p: 0.9,
 		};
 		requestBody.model = config.customModel;
 		const baseUrl = (config.customBaseUrl || CUSTOM_API_URL).replace(/\/+$/, ''); // 去除末尾多余斜杠
 
-		// 如果有上一轮响应ID，添加到请求体中
-		if (previousResponseId) {
+		// 如果有上一轮响应ID，添加到请求体中(无状态形态不依赖服务端存储,跳过)
+		if (!stateless && previousResponseId) {
 			requestBody.previous_response_id = previousResponseId;
-		} else if (mhistory.length === 2) {
+		} else if (!stateless && mhistory.length === 2) {
 			requestBody.input = mhistory;
 		}
 
@@ -533,8 +658,13 @@ async function callCustomChat(mhistory, previousResponseId = null, tools = [], s
 		return { data: result, request: requestBody };
 	} catch (error) {
 		error.requestBody = requestBody;
-		// previous_response_id 失效自愈:同 callArkChat;工具结果批次不重试
+		// 方舟缓存服务未开通自动降级:同 callArkChat(自定义端点为方舟兼容网关时可能透传该错误)
 		const isToolResultBatch = mhistory.length > 0 && mhistory[0].type !== undefined;
+		if (isCacheServiceDenied(error) && !(opts && opts.fullHistory)) {
+			storageUnavailableRuntime = true;
+			console.warn('检测到方舟缓存服务未开通,自动切换无状态模式重试:', error.message);
+			return callCustomChat(mhistory, null, tools, signal, { fullHistory: true });
+		}
 		if (previousResponseId && !isToolResultBatch && shouldRetryWithoutPrevId(error)) {
 			console.warn('previous_response_id 疑似失效,降级为全量历史重试:', error.message);
 			return retryWithFullHistory(mhistory, tools, signal);
@@ -590,6 +720,16 @@ async function testConnection(opts) {
 			const baseUrl = (mode === 'custom' ? opts.baseUrl || CUSTOM_API_URL : ARK_API_URL).replace(/\/+$/, '');
 			url = `${baseUrl}/responses`;
 			body = { model, input: [ping], store: false }; // 测试请求不落存储
+			// ARK 官网模式:显式携带缓存参数探测「缓存服务」是否开通——
+			// 该参数被服务端拒绝(403 AccessDenied.CacheService)即代表未开通,
+			// 与普通连接失败(网络/鉴权/参数)区分开,供配置页分别引导。
+			// 注意:方舟校验规则要求启用 caching 时 store 必须为 true
+			//(否则 400: store should be true when enable caching),
+			// 故缓存探测请求须同时置 store:true(与正式存储续接请求形态一致)
+			if (mode === 'ark') {
+				body.store = true;
+				body.caching = { type: 'enabled' };
+			}
 		}
 		const resp = await fetchWithTimeout(url, 30000, {
 			method: 'POST',
@@ -599,6 +739,15 @@ async function testConnection(opts) {
 		if (!resp.ok) {
 			// 尽量提取服务端真实错误原因(结构各异,JSON 优先降级纯文本)
 			const text = await resp.text().catch(() => '');
+			// 缓存服务未开通:与普通连接失败区分,cacheDenied 供配置页自动选择「未开启」
+			if (resp.status === 403 && /CacheService|cache service/i.test(text)) {
+				return {
+					ok: false,
+					cacheDenied: true,
+					message:
+						'缓存服务未开通:模型推理正常,但账号未开通「缓存服务」(上下文缓存/多轮续接依赖)。可在方舟控制台开通,或在配置中将缓存服务设为「未开启」以使用全量历史模式',
+				};
+			}
 			let message = `HTTP ${resp.status}`;
 			try {
 				const j = JSON.parse(text);
@@ -687,5 +836,6 @@ window.ArkAPI = {
 	updateConfig,
 	updateConnectionConfig,
 	isCustomChatProtocol, // 供 ai-chat.js 判断是否按 CC 无状态语义传参
+	isStatelessMode, // 集中判定无状态语义(CC 协议/运行时降级/ARK 未开启缓存服务),供传参决策
 	testConnection, // 供配置对话框「测试连接」按钮调用
 };

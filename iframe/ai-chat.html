@@ -93,6 +93,21 @@
 						<label for="arkModelInput">API Model (ARK官网):</label>
 						<input type="text" id="arkModelInput" class="config-input" placeholder="如 glm-5.2 / deepseek-v4-pro" />
 					</div>
+					<!-- 缓存服务配置(仅 ARK 官网模式显示,驱动请求形态:存储续接/全量历史) -->
+					<div class="config-item" id="arkCacheServiceContainer" style="display: none">
+						<label for="arkCacheServiceSelect">缓存服务:</label>
+						<select id="arkCacheServiceSelect" class="config-input">
+							<option value="on">已开启(存储续接,省 token)</option>
+							<option value="off">未开启(全量历史模式)</option>
+						</select>
+						<div class="config-hint">
+							多轮续接依赖火山方舟「缓存服务」;未开启时插件自动切换全量历史模式,每轮发送完整上下文,<strong>token 消耗会明显增大</strong
+							>。 可前往
+							<a href="https://console.volcengine.com/ark" target="_blank" rel="noopener noreferrer" class="config-link"
+								>方舟控制台开通</a
+							>。 不确定是否开通?点「测试连接」自动检测。
+						</div>
+					</div>
 					<!-- 第三种模式：用户自配主流模型兼容端点（deepseek / glm 等） -->
 					<div class="config-item custom-only" id="customApiKeyContainer">
 						<label for="customApiKeyInput">自定义 API Key:</label>

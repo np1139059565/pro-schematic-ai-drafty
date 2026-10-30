@@ -259,6 +259,19 @@ body {
 	font-size: 13px;
 	line-height: 1.6;
 	border-radius: 4px;
+	background: #f5f7fa;
+	color: #666;
+}
+
+/* 提示条内可点击跳转链接(如方舟控制台开通入口) */
+.config-hint a.config-link {
+	color: #1a73e8;
+	text-decoration: underline;
+	font-weight: 500;
+}
+
+.config-hint a.config-link:hover {
+	color: #0f5cd0;
 }
 
 .config-hint-warning {
@@ -766,6 +779,37 @@ body {
 	border: none;
 	border-top: 1px solid rgba(128, 128, 128, 0.3);
 	margin: 10px 0;
+}
+
+/* ==================== 错误卡片操作按钮 ==================== */
+/* 按钮组容器:横排排列,位于错误卡片末尾 */
+.error-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 10px;
+	flex-wrap: wrap;
+}
+
+/* 错误卡片内的操作按钮(重新发送/去开通缓存服务/切换全量历史等) */
+.error-resend-btn {
+	padding: 6px 14px;
+	font-size: 13px;
+	border: 1px solid #d9d9d9;
+	border-radius: 6px;
+	background: #fff;
+	color: #333;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.error-resend-btn:hover {
+	border-color: #1a73e8;
+	color: #1a73e8;
+	background: #f0f6ff;
+}
+
+.error-resend-btn:active {
+	transform: translateY(1px);
 }
 
 .code-block-container {

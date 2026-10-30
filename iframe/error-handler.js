@@ -33,9 +33,15 @@ const ErrorType = {
 function isQuotaIssue(text) {
 	const t = (text || '').toLowerCase();
 	return (
-		t.includes('额度') || t.includes('配额') || t.includes('余额') ||
-		t.includes('套餐') || t.includes('quota') || t.includes('token') ||
-		t.includes('余额不足') || t.includes('没有可用') || t.includes('insufficient')
+		t.includes('额度') ||
+		t.includes('配额') ||
+		t.includes('余额') ||
+		t.includes('套餐') ||
+		t.includes('quota') ||
+		t.includes('token') ||
+		t.includes('余额不足') ||
+		t.includes('没有可用') ||
+		t.includes('insufficient')
 	);
 }
 
@@ -47,10 +53,17 @@ function isQuotaIssue(text) {
 function isKeyConfigIssue(text) {
 	const t = (text || '').toLowerCase();
 	return (
-		t.includes('api key') || t.includes('apikey') || t.includes('key 不能为空') ||
-		t.includes('key不能为空') || t.includes('key 无效') || t.includes('key无效') ||
-		t.includes('model') || t.includes('模型') || t.includes('缺少 key') ||
-		t.includes('缺少密钥') || t.includes('missing key')
+		t.includes('api key') ||
+		t.includes('apikey') ||
+		t.includes('key 不能为空') ||
+		t.includes('key不能为空') ||
+		t.includes('key 无效') ||
+		t.includes('key无效') ||
+		t.includes('model') ||
+		t.includes('模型') ||
+		t.includes('缺少 key') ||
+		t.includes('缺少密钥') ||
+		t.includes('missing key')
 	);
 }
 
@@ -127,8 +140,10 @@ function classifyError(error, defaultTitle = '操作失败') {
 		},
 		[ErrorType.PARAM]: {
 			title: '参数错误',
-			message: '请求参数不合法,服务拒绝执行。',
-			action: '请检查输入内容或配置,必要时清空对话后重试。',
+			// 透传服务端真实校验文案(如"store should be true when enable caching"),
+			// 参数拒绝原因高度依赖服务端规则,写死泛化文案反而掩盖排查线索
+			message: rawMessage,
+			action: '请将上方真实原因反馈给开发者或检查配置;必要时清空对话后重试。',
 		},
 		[ErrorType.TOOL_EXEC]: {
 			title: '工具执行失败',

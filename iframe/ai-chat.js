@@ -40,6 +40,8 @@ let configCancelBtn; // 配置取消按钮
 let arkApiKeyInput; // API Key 输入框
 let arkModelInput; // API Model 输入框
 let arkModelInputContainer; // API Model 输入框容器（用于显示/隐藏）
+let arkCacheServiceContainer; // 缓存服务配置项容器（仅 ARK 官网模式显示）
+let arkCacheServiceSelect; // 缓存服务下拉框(on 已开启 / off 未开启-全量历史)
 let usePrivateServerCheckbox; // 使用私服复选框（旧版遗留，仅保留引用，逻辑已由连接模式选择器取代）
 let customApiKeyInput; // 自定义模式 API Key 输入框
 let customBaseUrlInput; // 自定义模式 Base URL 输入框
@@ -288,6 +290,8 @@ function init() {
 	arkApiKeyInput = document.getElementById('arkApiKeyInput');
 	arkModelInput = document.getElementById('arkModelInput');
 	arkModelInputContainer = document.getElementById('arkModelInputContainer'); // 获取 API Model 输入框容器
+	arkCacheServiceContainer = document.getElementById('arkCacheServiceContainer'); // 获取缓存服务配置项容器
+	arkCacheServiceSelect = document.getElementById('arkCacheServiceSelect'); // 获取缓存服务下拉框
 	arkApiKeyContainer = document.getElementById('arkApiKeyContainer'); // 获取 API Key 配置项容器
 	customApiKeyInput = document.getElementById('customApiKeyInput'); // 获取自定义 API Key 输入框
 	customBaseUrlInput = document.getElementById('customBaseUrlInput'); // 获取自定义 Base URL 输入框
@@ -922,14 +926,13 @@ async function callAIAndHandleResponse() {
 	let chatLogId;
 	try {
 		// 根据配置选择调用 ARK API 或私服 API
-		// Chat Completions 为无状态协议:每一轮都必须携带工具描述,
-		// 否则第 2 轮起模型丢失工具能力(服务端无缓存续接),历史含 tool 消息时还可能被服务端拒绝;
-		// Responses 协议维持原有「首轮注入,后续靠服务端缓存续接」的渐进策略不变
-		const ccMode = window.ArkAPI.isCustomChatProtocol();
+		// 无状态形态(CC 协议/ARK 未开启缓存服务)每轮必须携带工具描述,
+		// 否则服务端无缓存续接,模型将丢失工具能力;
+		// Responses 存储续接形态维持「首轮注入,后续靠服务端缓存续接」的渐进策略不变
 		apiPromise = getChatCaller()(
 			conversationHistory,
-			previousResponseId,
-			isAddTool || ccMode ? collectToolDescriptions() : null,
+			previousResponseId, // 无状态形态下 ark-api 层会自动忽略 prev_id
+			isAddTool || window.ArkAPI.isStatelessMode() ? collectToolDescriptions() : null,
 			window.AbortManager.createTimeoutSignal(180000),
 		); // 调用 API(绑定 180s 超时+手动取消信号)
 
@@ -1216,11 +1219,14 @@ async function continueConversationAfterTools(toolInputMessages) {
 		// Chat Completions 为无状态协议:工具结果轮必须传完整会话历史
 		// (此时 conversationHistory 已含 assistant.toolCalls 与 role:'tool' 结果),
 		// 由适配层 convertHistoryToCCMessages 统一转换;Responses 协议仍传增量批次
-		const payload = window.ArkAPI.isCustomChatProtocol() ? conversationHistory : toolInputMessages;
+		// 无状态语义集中判定:CC 协议天然无状态;ARK 官网配置为未开启缓存服务;或
+		// Responses 通道运行时检测到存储不可用降级(isStatelessMode 由 ark-api.js 提供)
+		const stateless = window.ArkAPI.isStatelessMode();
+		const payload = stateless ? conversationHistory : toolInputMessages;
 		apiPromise = getChatCaller()(
-			payload, // CC: 完整历史;Responses: 工具执行结果增量批次
-			previousResponseId, // 上一轮响应 ID(CC 模式不依赖,仅 Responses 使用)
-			window.ArkAPI.isCustomChatProtocol() ? collectToolDescriptions() : null, // CC 无状态每轮必带工具,Responses 靠服务端缓存续接无需重传
+			payload, // 无状态: 完整历史;存储续接: 工具执行结果增量批次
+			stateless ? null : previousResponseId, // 上一轮响应 ID(仅存储续接形态使用)
+			stateless ? collectToolDescriptions() : null, // 无状态每轮必带工具;存储续接靠服务端缓存续接无需重传
 			window.AbortManager.createTimeoutSignal(180000), // 绑定 180s 超时+手动取消信号
 		); // 调用 API
 
@@ -1329,6 +1335,49 @@ function handleAIError(error, errorPrefix = 'AI 请求失败', onResend = null) 
 	if (AbortManager.isCancelled()) {
 		updateStatus('已停止', 'idle'); // 更新状态为空闲
 		return; // 直接返回,不展示错误
+	}
+
+	// 火山方舟缓存服务未开通(ARK 官网模式专属错误码,见 ark-api.js callArkChat):
+	// 不走通用错误分类,渲染专属引导卡片——「去开通缓存服务」/「切换全量历史模式」双按钮
+	if (error && error.code === 'CACHE_SERVICE_DENIED') {
+		const cardText =
+			'❌ 火山方舟缓存服务未开通\n' +
+			'当前账号尚未开通该模型的「缓存服务」,插件依赖的上下文缓存与多轮续接无法使用。\n' +
+			'可选择:前往方舟控制台开通缓存服务,或切换为全量历史模式(不依赖缓存服务,但每轮发送完整上下文,token 消耗会增大)。';
+		const cardDiv = addMessageToChat('assistant', cardText, true); // 渲染错误卡片
+		updateStatus('缓存服务未开通', 'error'); // 状态栏提示
+		if (cardDiv) {
+			try {
+				const contentDiv = cardDiv.querySelector('.message-content') || cardDiv;
+				const actions = document.createElement('div'); // 按钮容器
+				actions.className = 'error-actions'; // 横排按钮组样式
+				// 按钮一:跳转火山方舟控制台,由用户手动开通缓存服务
+				const openBtn = document.createElement('button');
+				openBtn.className = 'error-resend-btn'; // 复用错误按钮样式
+				openBtn.textContent = '去开通缓存服务';
+				openBtn.onclick = () => window.open('https://console.volcengine.com/ark', '_blank', 'noopener');
+				// 按钮二:切换全量历史模式(先弹窗提醒 token 消耗会增大,确认后持久化配置)
+				const switchBtn = document.createElement('button');
+				switchBtn.className = 'error-resend-btn';
+				switchBtn.textContent = '切换全量历史模式';
+				switchBtn.onclick = () => {
+					const confirmed = confirm('切换后将采用「全量历史模式」:每轮发送完整上下文,不依赖缓存服务,但 token 消耗会增大。\n\n确定切换吗?');
+					if (!confirmed) return; // 用户取消则保持现状
+					localStorage.setItem('ark_cache_service', 'off'); // 持久化配置
+					if (arkCacheServiceSelect) arkCacheServiceSelect.value = 'off'; // 同步配置页选中值
+					if (actions.parentNode) actions.parentNode.removeChild(actions); // 移除按钮组(已处理完毕)
+					if (cardDiv.parentNode) cardDiv.parentNode.removeChild(cardDiv); // 移除错误卡片
+					addMessageToChat('assistant', '✅ 已切换为全量历史模式,请重新发送消息。之后可在「配置」的缓存服务项中随时切回。', false); // 引导重发
+					updateStatus('已切换为全量历史模式', 'success');
+				};
+				actions.appendChild(openBtn);
+				actions.appendChild(switchBtn);
+				contentDiv.appendChild(actions); // 追加按钮组到错误卡片末尾
+			} catch (btnErr) {
+				console.error('[ai-chat] 缓存服务引导按钮渲染失败(不影响错误提示):', btnErr);
+			}
+		}
+		return; // 专属引导已渲染,不走通用错误流程
 	}
 
 	// 错误分类与恢复引导(对标 Cursor / Claude Code 的分类型提示)
@@ -1877,6 +1926,7 @@ function applyModeVisibility(mode) {
 	const showCustom = mode === 'custom'; // 自定义模式专属三项
 	if (arkApiKeyContainer) arkApiKeyContainer.style.display = showArkKey ? 'block' : 'none';
 	if (arkModelInputContainer) arkModelInputContainer.style.display = showArkModel ? 'block' : 'none';
+	if (arkCacheServiceContainer) arkCacheServiceContainer.style.display = showArkModel ? 'block' : 'none'; // 缓存服务仅 ARK 官网模式可见
 	if (customApiKeyContainer) customApiKeyContainer.style.display = showCustom ? 'block' : 'none';
 	if (customBaseUrlContainer) customBaseUrlContainer.style.display = showCustom ? 'block' : 'none';
 	if (customProtocolContainer) customProtocolContainer.style.display = showCustom ? 'block' : 'none'; // 接口协议仅自定义模式可见
@@ -1930,6 +1980,10 @@ function handleConfigClick() {
 	// 回显自定义接口协议(缺省 Responses API)
 	const savedProtocol = localStorage.getItem('custom_api_protocol') || 'responses';
 	if (customProtocolSelect) customProtocolSelect.value = savedProtocol;
+	// 回显缓存服务配置(缺省「已开启」)
+	if (arkCacheServiceSelect) {
+		arkCacheServiceSelect.value = localStorage.getItem('ark_cache_service') === 'off' ? 'off' : 'on';
+	}
 	privateServerUrlInput.value = currentPrivateServerUrl; // 设置私服服务器地址
 
 	// 选中对应模式 radio（仅同步界面，不触发清空）
@@ -1971,6 +2025,19 @@ async function handleTestConnection() {
 		if (result.ok) {
 			configTestBtn.textContent = '连接成功';
 			updateStatus(`测试连接成功${result.detail ? ' · ' + result.detail : ''}`, 'success'); // 状态栏同步提示
+		} else if (result.cacheDenied) {
+			// 缓存服务未开通:与普通连接失败区分处理——
+			// 模型推理与鉴权均正常,仅「缓存服务」未开通;自动把配置页下拉切到「未开启」
+			//(仅改表单选中值,点「保存」后生效),用户也可选择去方舟控制台开通
+			configTestBtn.textContent = '连接成功';
+			if (arkCacheServiceSelect) arkCacheServiceSelect.value = 'off'; // 自动选择未开启
+			alert(
+				'测试连接成功,但检测到缓存服务未开通:\n\n' +
+					'模型推理正常,账号尚未开通火山方舟「缓存服务」(上下文缓存/多轮续接依赖)。\n\n' +
+					'已自动将「缓存服务」选择为「未开启」,点击「保存」后即可正常使用(全量历史模式,token 消耗会增大)。\n\n' +
+					'也可前往火山方舟控制台开通缓存服务后,将该项改回「已开启」。',
+			);
+			updateStatus('缓存服务未开通,已自动选择「未开启」,保存后生效', 'info');
 		} else {
 			configTestBtn.textContent = '连接失败';
 			alert('测试连接失败:\n' + result.message); // 弹窗展示服务端真实错误原因
@@ -2016,6 +2083,7 @@ function handleSaveConfig() {
 		const customBaseUrl = customBaseUrlInput.value.trim(); // 自定义 Base URL
 		const customModel = customModelInput.value.trim(); // 自定义 Model
 		const customProtocol = customProtocolSelect ? customProtocolSelect.value : 'responses'; // 自定义接口协议 responses | chat
+		const arkCacheService = arkCacheServiceSelect ? arkCacheServiceSelect.value : 'on'; // ARK 缓存服务 on | off
 		const privateServerUrl = privateServerUrlInput.value.trim(); // 私服服务器地址
 
 		// 与已保存配置对比，检测是否真正发生修改（含模式与自定义字段）
@@ -2035,6 +2103,12 @@ function handleSaveConfig() {
 			customBaseUrl !== savedCustomBaseUrl || // 自定义 Base URL 变化
 			customModel !== savedCustomModel || // 自定义 Model 变化
 			customProtocol !== savedCustomProtocol; // 接口协议变化(两协议请求/响应结构不同,须清空历史)
+
+		// 持久化 ARK 缓存服务选项(仅 ARK 官网模式语义;两种形态对客户端全量历史互相兼容,
+		// 切换不产生上下文污染,因此不计入 configChanged、不清空对话记录)
+		if (newMode === 'ark') {
+			localStorage.setItem('ark_cache_service', arkCacheService);
+		}
 
 		// 修改 API 后清空页面记录，避免旧历史被不同服务端返回的上下文污染
 		if (configChanged) {
