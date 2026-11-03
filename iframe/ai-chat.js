@@ -470,22 +470,22 @@ function updatePreviousResponseId(responseId) {
  * @param {Object} item - 消息项
  * @returns {string} 消息内容
  */
-function extractMessageContent(item) {
-	if (item.content && Array.isArray(item.content)) {
-		// content 是数组格式
-		return item.content
-			.filter(c => c.type === 'output_text') // 过滤文本类型
-			.map(c => c.text) // 提取文本
-			.join(''); // 拼接文本
-	} else if (typeof item.content === 'string') {
-		// content 是字符串格式
-		return item.content; // 直接返回字符串
-	}
-	return ''; // 默认返回空字符串
-}
-
 /**
- * 提取工具调用
+ * 提取消息内容（兼容三种协议的 content 结构）
+ *
+ * ARK       content[].type === 'output_text' 且 .text
+ * Anthropic content[].type === 'text' 且 .text
+ * OpenAI    content 直接是字符串
+ *
+ * 早期实现只认 output_text，遇到 Anthropic 的 text 会过滤成空串，
+ * 表现为「收到了响应但回答是空的」。
+ *
+ * @param {Object} item - 消息项
+ * @returns {string} 消息内容
+ */
+/**
+ * 提取工具调用（ARK 格式：function_call 项）
+ *
  * @param {Object} item - 工具调用项
  * @returns {Object} 工具调用对象
  */
@@ -501,55 +501,102 @@ function extractToolCall(item) {
 	}; // 返回工具调用对象
 }
 
-/**
- * 解析 AI API 响应，提取回复内容和工具调用信息
- * @param response - API 响应对象（Responses API 格式）
- * @returns {Object} 包含 content 和 toolCalls 的对象
- */
-function parseAIResponse(response) {
-	// 解析 AI 回复
-	let aiResponse = ''; // AI 回复内容
-	let toolCalls = null; // 工具调用信息
 
-	if (response && response.output && Array.isArray(response.output)) {
-		// Responses API 格式：解析 output 数组
-		const output = response.output; // 获取 output 数组
-
-		// 查找消息类型的输出
-		for (const item of output) {
-			if (item.type === 'message' && item.role === 'assistant') {
-				// 找到助手消息
-				aiResponse = extractMessageContent(item); // 提取消息内容
-			} else if (item.type === 'function_call') {
-				// 找到工具调用
-				if (!toolCalls) {
-					toolCalls = []; // 初始化工具调用数组
-				}
-				toolCalls.push(extractToolCall(item)); // 提取并添加工具调用
-			}
-		}
-
-		// 如果既没有内容也没有工具调用
-		if (!aiResponse && !toolCalls) {
-			aiResponse = '抱歉，我没有收到有效的回复.'; // 错误提示
-		}
-	} else {
-		// 如果响应格式不正确
-		aiResponse = '抱歉，AI 返回的响应格式不正确.'; // 错误提示
+function extractMessageContent(item) {
+	if (item.content && Array.isArray(item.content)) {
+		// 数组格式：不限定 type，凡带 text 的都取，兼容 ARK 的 output_text 与 Anthropic 的 text
+		return item.content
+			.filter(c => c && typeof c.text === 'string')
+			.map(c => c.text)
+			.join('');
+	} else if (typeof item.content === 'string') {
+		// 字符串格式（OpenAI 与部分 Anthropic 响应）
+		return item.content;
 	}
-
-	return {
-		content: aiResponse, // 回复内容
-		toolCalls: toolCalls, // 工具调用信息
-		responseId: response?.id, // 响应 ID
-	}; // 返回解析结果
+	return ''; // 默认返回空字符串
 }
 
 /**
- * 从工具调用生成代码块内容
- * @param {Array} toolCalls - 工具调用数组
- * @returns {string} 代码块内容
+ * 解析 AI API 响应，自动识别三种协议格式
+ *
+ * 私服不承诺返回火山引擎形状，返回什么形状取决于后台配置的模型协议：
+ *   OpenAI    {choices: [{message: {role, content}, finish_reason}], usage}
+ *   Anthropic {type: 'message', role, content: [{type: 'text', text}], usage}
+ *   ARK       {status, output: [{type: 'message', role, content: [{type: 'output_text', text}]}]}
+ *
+ * 这里按「响应里有哪个标志字段」判断，插件不需要知道后台配了什么模型。
+ *
+ * @param response - API 响应对象
+ * @returns {Object} 包含 content、toolCalls、responseId 的对象
  */
+function parseAIResponse(response) {
+	let aiResponse = ''; // AI 回复内容
+	let toolCalls = null; // 工具调用信息
+
+	if (!response || typeof response !== 'object') {
+		return { content: '抱歉，AI 返回的响应格式不正确.', toolCalls: null, responseId: null };
+	}
+
+	// ── 格式一：OpenAI Chat Completions ──
+	if (Array.isArray(response.choices)) {
+		const choice = response.choices[0] || {};
+		const message = choice.message || {};
+		aiResponse = typeof message.content === 'string' ? message.content : '';
+		// 工具调用在 message.tool_calls
+		if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+			toolCalls = message.tool_calls.map(tc => ({
+				id: tc.id,
+				function: {
+					name: (tc.function || {}).name,
+					arguments: typeof (tc.function || {}).arguments === 'string'
+						? tc.function.arguments
+						: JSON.stringify((tc.function || {}).arguments || {}),
+				},
+			}));
+		}
+	}
+	// ── 格式二：Anthropic Messages ──
+	else if (Array.isArray(response.content) && response.type === 'message') {
+		const textParts = response.content.filter(c => c && c.type === 'text');
+		aiResponse = textParts.map(c => c.text || '').join('');
+		// 工具调用是 content 里 type === 'tool_use' 的项
+		const toolParts = response.content.filter(c => c && c.type === 'tool_use');
+		if (toolParts.length > 0) {
+			toolCalls = toolParts.map(t => ({
+				id: t.id,
+				function: {
+					name: t.name,
+					arguments: JSON.stringify(t.input || {}),
+				},
+			}));
+		}
+	}
+	// ── 格式三：火山引擎 ARK ──
+	else if (Array.isArray(response.output)) {
+		for (const item of response.output) {
+			if (item.type === 'message' && item.role === 'assistant') {
+				aiResponse = extractMessageContent(item);
+			} else if (item.type === 'function_call') {
+				if (!toolCalls) toolCalls = [];
+				toolCalls.push(extractToolCall(item));
+			}
+		}
+	}
+
+	// 既没有内容也没有工具调用时给出提示
+	if (!aiResponse && !toolCalls) {
+		aiResponse = '抱歉，我没有收到有效的回复.';
+	}
+
+	return {
+		content: aiResponse,
+		toolCalls: toolCalls,
+		// id 三种协议都有，用于续接下一轮
+		responseId: response.id,
+	};
+}
+
+
 function generateCodeFromToolCalls(toolCalls) {
 	if (!toolCalls || toolCalls.length === 0) {
 		return ''; // 如果没有工具调用，返回空字符串
