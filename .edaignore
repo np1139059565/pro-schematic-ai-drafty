@@ -17,4 +17,6 @@
 /package-lock.json
 /package.json
 /tsconfig.json
+/docs/_project_materials/
+/graphify-out/
 debug.log
