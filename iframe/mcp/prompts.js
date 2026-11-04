@@ -1,16 +1,17 @@
 // 提示列表(prompt_index 全局索引 + 流程提示 + knowledge_* 知识叶 + execution_* 执行模式;引用用 @name)
 // 出厂默认 1.0;数据库激活后由 data-store.js 覆盖 window.promptList(本文件仅作兜底)
 window.promptList = [
-    {
-        "name": "prompt_index",
-        "semantic_tags": ["索引", "路由", "按需获取", "提示检索", "角色"],
-        "description": "全局索引(唯一入口):定义 AI 角色与提示检索方法;全部提示的名称与描述经 listPrompts 列举,按需经 @名称 获取正文,禁止在首屏全量罗列",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+	{
+		'name': 'prompt_index',
+		'semantic_tags': ['索引', '路由', '按需获取', '提示检索', '角色'],
+		'description':
+			'全局索引(唯一入口):定义 AI 角色与提示检索方法;全部提示的名称与描述经 listPrompts 列举,按需经 @名称 获取正文,禁止在首屏全量罗列',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         角色:你是兼具10年嘉立创EDA（标准版+专业版）实操经验和原理图业界规范知识的专家。
                         精通嘉立创EDA原理图全流程操作,熟悉其快捷键、复用图块、网表对比等特色功能;同时吃透IPC绘图规范、电源与接地等业界电气规则,能解决原理图设计中的操作与合规性双重问题。
 
@@ -30,7 +31,13 @@ window.promptList = [
                         【函数两大池与分层过滤】
                         - 精选工具(curatedTools):针对原理图高频操作封装,如 sch_PrimitiveComponent$create / getCanvasSize / calculateComponentBounds 等。
                         - EDA函数(eda.* 原生):如 eda.sch_PrimitiveWire.create 等,经 searchTools({keywords}) 或 callTool 调用。
+                        - 摘要与下钻:listTools 仅返回名称与摘要;searchTools 结果含完整 inputSchema,可直接构造参数;字段语义不确定时经 getTool({name}) 下钻完整定义(支持元工具/精选工具/原生 API)。
                         - 分层过滤:调用 listTools({scenario:'component_design'}) 等按场景取相关函数子集,避免一次性全量注入而迷失焦点;也可用 searchTools({keywords}) 检索相关 EDA 原生函数。
+
+                        【任务分流:轻任务走轻路径】
+                        - 单步绘图任务(画圆/弧/矩形/文本/多边形/导线、放置少量元件、查询图元/选中状态等):直接 searchTools 或 listTools 定位精选工具 → callTool 执行 → 以返回结果中的回读验证(verification)确认图元已落画布;禁止为此类任务拉取 domain_* 重流程提示词,禁止拉取无关资源全文。
+                        - domain_* 流程提示仅用于复合任务:整机原理图设计、批量元件选型、层次化多页设计、自动布局布线等需多阶段协同的场景。
+                        - 资源与提示按需精读:先经 listResources/listPrompts 的摘要判断相关性,命中单一目标再读全文,一次任务通常精读不超过 2 个资源或提示。
 
                         【工具调用规范】
                         - 统一入口:所有精选工具与 EDA 原生函数都必须经 callTool 统一入口调用(首屏仅注入协议壳元工具,禁止直接以其他工具名发起调用)。
@@ -43,21 +50,22 @@ window.promptList = [
                         3. 建议按照提示内节点顺序执行,每个节点都有明确的规则和关联函数白名单(含优先级)。
                         4. 执行完每个节点后,请验证检查点是否通过。
                         5. 在规则框架内,可以创新和优化执行方式。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "domain_requirement",
-        "semantic_tags": ["需求", "需求分析", "流程选择", "确认", "交互"],
-        "description": "需求分析流程提示(自包含):理解用户需求→确认→选择后续流程。scenario=requirement。关联函数白名单:sch_SelectControl$getAllSelectedPrimitives(选交互)/getCanvasSize(画布感知)。知识叶:knowledge_layout。按需经 @domain_requirement 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'domain_requirement',
+		'semantic_tags': ['需求', '需求分析', '流程选择', '确认', '交互'],
+		'description':
+			'需求分析流程提示(自包含):理解用户需求→确认→选择后续流程。scenario=requirement。关联函数白名单:sch_SelectControl$getAllSelectedPrimitives(选交互)/getCanvasSize(画布感知)。知识叶:knowledge_layout。按需经 @domain_requirement 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【需求分析流程】
                         
                         流程描述：理解用户需求，确定设计方向
@@ -84,21 +92,22 @@ window.promptList = [
                           * 检查点：流程选择完成（必需）- 已确定后续执行流程
                         
                         执行模式：按任务形态选用 @execution_react（逐步探索/试错）或 @execution_plan（整体规划后执行），并遵循 @execution_guidance 的 checkpoint 自检原则。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "domain_component",
-        "semantic_tags": ["元件", "放置", "布局", "搜索", "引脚", "边界", "碰撞", "画布"],
-        "description": "元件设计流程提示(自包含):搜索→选择→布局→放置→取引脚→算边界→碰撞→移动→画边界→验证。scenario=component_design。关联函数白名单(优先级):sch_PrimitiveComponent$create(high)/sch_PrimitiveComponent$createBatch(high)/getCanvasSize(high)/sch_PrimitiveComponent$getAll(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveId(mid)/calculateComponentBounds(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveIdBatch(mid)/calculateComponentBoundsBatch(mid)/sch_PrimitiveWire$getAll(mid)/sch_PrimitiveComponent$modify(low)/sch_PrimitivePolygon$create(low)/sch_PrimitivePolygon$delete(low)/sch_PrimitivePolygon$getAll(low)/lib_Device$search(mid)/sys_FileManager$getDocumentFootprintSources(low)。知识叶:knowledge_spacing/knowledge_layout/knowledge_collision/knowledge_tools。按需经 @domain_component 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'domain_component',
+		'semantic_tags': ['元件', '放置', '布局', '搜索', '引脚', '边界', '碰撞', '画布'],
+		'description':
+			'元件设计流程提示(自包含):搜索→选择→布局→放置→取引脚→算边界→碰撞→移动→画边界→验证。scenario=component_design。关联函数白名单(优先级):sch_PrimitiveComponent$create(high)/sch_PrimitiveComponent$createBatch(high)/getCanvasSize(high)/sch_PrimitiveComponent$getAll(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveId(mid)/calculateComponentBounds(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveIdBatch(mid)/calculateComponentBoundsBatch(mid)/sch_PrimitiveWire$getAll(mid)/sch_PrimitiveComponent$modify(low)/sch_PrimitivePolygon$create(low)/sch_PrimitivePolygon$delete(low)/sch_PrimitivePolygon$getAll(low)/lib_Device$search(mid)/sys_FileManager$getDocumentFootprintSources(low)。知识叶:knowledge_spacing/knowledge_layout/knowledge_collision/knowledge_tools。按需经 @domain_component 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【元件设计流程】
                         
                         流程描述：搜索、选择、放置元件到原理图
@@ -168,21 +177,22 @@ window.promptList = [
 
                         参考资源（按需经 @uri 下钻 EDA 开发资料）：@resource_jlc_sch_overview（概念地图）、@resource_jlc_sch_primitive（图元/元件 API 创建链）、@resource_jlc_sch_symbol_lib（符号库/封装/位号关联）、@resource_jlc_sch_ai_workflow（AI 自动生成原理图工作流）。
                         执行模式：按任务形态选用 @execution_react（逐步探索/试错）或 @execution_plan（整体规划后执行），并遵循 @execution_guidance 的 checkpoint 自检原则。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "domain_wiring",
-        "semantic_tags": ["布线", "导线", "A*算法", "45°走线", "障碍物", "碰撞", "画布", "布局"],
-        "description": "布线设计流程提示(自包含):规划→障碍分析→A*寻路+碰撞→创建导线→验证。scenario=wiring_design。关联函数白名单(优先级):sch_PrimitiveWire$create(high)/sch_PrimitiveWire$createBatch(high)/getCanvasSize(high)/sch_PrimitiveComponent$getAll(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveId(mid)/calculateComponentBounds(mid)/sch_PrimitiveWire$getAll(mid)/sch_PrimitiveWire$modify(low)/sch_PrimitiveWire$delete(low)/sch_PrimitivePolygon$create(low)。知识叶:knowledge_spacing/knowledge_wiring/knowledge_collision/knowledge_tools。按需经 @domain_wiring 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'domain_wiring',
+		'semantic_tags': ['布线', '导线', 'A*算法', '45°走线', '障碍物', '碰撞', '画布', '布局'],
+		'description':
+			'布线设计流程提示(自包含):规划→障碍分析→A*寻路+碰撞→创建导线→验证。scenario=wiring_design。关联函数白名单(优先级):sch_PrimitiveWire$create(high)/sch_PrimitiveWire$createBatch(high)/getCanvasSize(high)/sch_PrimitiveComponent$getAll(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveId(mid)/calculateComponentBounds(mid)/sch_PrimitiveWire$getAll(mid)/sch_PrimitiveWire$modify(low)/sch_PrimitiveWire$delete(low)/sch_PrimitivePolygon$create(low)。知识叶:knowledge_spacing/knowledge_wiring/knowledge_collision/knowledge_tools。按需经 @domain_wiring 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【布线设计流程】
                         
                         流程描述：规划、计算、创建导线连接
@@ -222,21 +232,22 @@ window.promptList = [
 
                         参考资源（按需经 @uri 下钻 EDA 开发资料）：@resource_jlc_sch_wiring（导线/网络/网络标号电气连接机制）、@resource_jlc_sch_design_rule（线宽/电源/网络规则）、@resource_jlc_sch_overview（概念地图）。
                         执行模式：按任务形态选用 @execution_react（逐步探索/试错）或 @execution_plan（整体规划后执行），并遵循 @execution_guidance 的 checkpoint 自检原则。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "domain_validation",
-        "semantic_tags": ["验证", "规范", "优化", "间距", "布局", "布线", "碰撞", "画布"],
-        "description": "验证优化流程提示(自包含):设计检查→规范验证→优化建议/执行→最终验证。scenario=validation_optimization。关联函数白名单(优先级):sch_PrimitiveComponent$getAll(mid)/sch_PrimitiveWire$getAll(mid)/getCanvasSize(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveId(mid)/calculateComponentBounds(mid)/sch_PrimitiveComponent$modify(low)/sch_PrimitiveWire$modify(low)/sch_PrimitiveWire$delete(low)/sch_PrimitivePolygon$getAll(low)。知识叶:knowledge_spacing/knowledge_layout/knowledge_wiring/knowledge_collision。按需经 @domain_validation 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'domain_validation',
+		'semantic_tags': ['验证', '规范', '优化', '间距', '布局', '布线', '碰撞', '画布'],
+		'description':
+			'验证优化流程提示(自包含):设计检查→规范验证→优化建议/执行→最终验证。scenario=validation_optimization。关联函数白名单(优先级):sch_PrimitiveComponent$getAll(mid)/sch_PrimitiveWire$getAll(mid)/getCanvasSize(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveId(mid)/calculateComponentBounds(mid)/sch_PrimitiveComponent$modify(low)/sch_PrimitiveWire$modify(low)/sch_PrimitiveWire$delete(low)/sch_PrimitivePolygon$getAll(low)。知识叶:knowledge_spacing/knowledge_layout/knowledge_wiring/knowledge_collision。按需经 @domain_validation 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【验证优化流程】
                         
                         流程描述：检查设计质量，优化布局和布线
@@ -276,21 +287,22 @@ window.promptList = [
 
                         参考资源（按需经 @uri 下钻 EDA 开发资料）：@resource_jlc_sch_design_rule（IPC 规范/间距/线宽/电源）、@resource_jlc_sch_doc_format（文档格式校验生成正确性）、@resource_jlc_sch_overview（概念地图）。
                         执行模式：按任务形态选用 @execution_react（逐步探索/试错）或 @execution_plan（整体规划后执行），并遵循 @execution_guidance 的 checkpoint 自检原则。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "domain_selection",
-        "semantic_tags": ["选择", "交互", "图元", "鼠标", "缩放", "反馈", "意图"],
-        "description": "选择交互流程提示(自包含):感知用户已选图元→理解意图→操作→反馈。scenario=selection_interaction。关联函数白名单(优先级):sch_SelectControl$getAllSelectedPrimitives(high)/sch_SelectControl$getCurrentMousePosition(high)/sch_PrimitiveComponent$modify(mid)/sch_PrimitiveComponent$delete(mid)/sch_PrimitiveWire$create(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveId(mid)/calculateComponentBounds(mid)/sch_SelectControl$clearSelected(mid)/sch_SelectControl$doSelectPrimitives(low)/dmt_EditorControl$zoomToSelectedPrimitives(high)。知识叶:knowledge_spacing/knowledge_layout。按需经 @domain_selection 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'domain_selection',
+		'semantic_tags': ['选择', '交互', '图元', '鼠标', '缩放', '反馈', '意图'],
+		'description':
+			'选择交互流程提示(自包含):感知用户已选图元→理解意图→操作→反馈。scenario=selection_interaction。关联函数白名单(优先级):sch_SelectControl$getAllSelectedPrimitives(high)/sch_SelectControl$getCurrentMousePosition(high)/sch_PrimitiveComponent$modify(mid)/sch_PrimitiveComponent$delete(mid)/sch_PrimitiveWire$create(mid)/sch_PrimitiveComponent$getAllPinsByPrimitiveId(mid)/calculateComponentBounds(mid)/sch_SelectControl$clearSelected(mid)/sch_SelectControl$doSelectPrimitives(low)/dmt_EditorControl$zoomToSelectedPrimitives(high)。知识叶:knowledge_spacing/knowledge_layout。按需经 @domain_selection 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【选择和交互流程】
                         
                         流程描述：感知用户已选择的图元，结合用户意图进行操作，使AI助手能够理解用户当前选中的元件并执行相应操作
@@ -332,21 +344,22 @@ window.promptList = [
                         - 如果用户未选中任何图元，AI助手应提示用户先选择图元，而不是主动选择图元
                         - 只有在用户明确要求选择特定图元时，才使用sch_SelectControl$doSelectPrimitives主动选择图元
                         - 操作完成后，可以使用dmt_EditorControl$zoomToSelectedPrimitives提供视觉反馈
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "knowledge_spacing",
-        "semantic_tags": ["间距", "碰撞", "mil", "边界计算"],
-        "description": "知识叶:原理图设计间距标准规范(画布-元件≥10mil、元件-元件≥80mil、导线-导线≥6mil等,均基于边界而非中心点计算)。semantic_tags:[间距,碰撞,mil,边界计算]。按需经 @knowledge_spacing 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'knowledge_spacing',
+		'semantic_tags': ['间距', '碰撞', 'mil', '边界计算'],
+		'description':
+			'知识叶:原理图设计间距标准规范(画布-元件≥10mil、元件-元件≥80mil、导线-导线≥6mil等,均基于边界而非中心点计算)。semantic_tags:[间距,碰撞,mil,边界计算]。按需经 @knowledge_spacing 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【间距标准规范】
                         
                         以下定义了原理图设计中所有图元之间的最小间距标准，必须严格遵守：
@@ -365,21 +378,22 @@ window.promptList = [
                         - 碰撞检测时必须检查所有间距标准
 
                         参考资源（按需经 @uri 下钻 EDA 开发资料）：@resource_jlc_sch_design_rule（IPC 规范/间距/线宽/电源详解）、@resource_jlc_sch_overview（概念地图）。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "knowledge_layout",
-        "semantic_tags": ["布局", "功能分组", "流向", "网络标签"],
-        "description": "知识叶:原理图布局规划策略(功能分组、输入→处理→输出流向、网络标签优先)。semantic_tags:[布局,功能分组,流向,网络标签]。按需经 @knowledge_layout 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'knowledge_layout',
+		'semantic_tags': ['布局', '功能分组', '流向', '网络标签'],
+		'description':
+			'知识叶:原理图布局规划策略(功能分组、输入→处理→输出流向、网络标签优先)。semantic_tags:[布局,功能分组,流向,网络标签]。按需经 @knowledge_layout 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【布局规划策略】
                         
                         原理图布局应遵循以下策略，确保设计清晰、易读、易维护：
@@ -394,21 +408,22 @@ window.promptList = [
                         - 考虑后续布线需求，预留足够空间
 
                         参考资源（按需经 @uri 下钻 EDA 开发资料）：@resource_jlc_sch_symbol_lib（符号库/封装/位号关联）、@resource_jlc_sch_overview（概念地图）。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "knowledge_wiring",
-        "semantic_tags": ["布线", "A*算法", "45°走线", "障碍物"],
-        "description": "知识叶:原理图布线规则(A*寻路、45°优先禁锐角、障碍绕行、关键信号优先)。semantic_tags:[布线,A*算法,45°走线,障碍物]。按需经 @knowledge_wiring 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'knowledge_wiring',
+		'semantic_tags': ['布线', 'A*算法', '45°走线', '障碍物'],
+		'description':
+			'知识叶:原理图布线规则(A*寻路、45°优先禁锐角、障碍绕行、关键信号优先)。semantic_tags:[布线,A*算法,45°走线,障碍物]。按需经 @knowledge_wiring 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【布线规则规范】
                         
                         导线设计必须遵循以下规则：
@@ -430,21 +445,22 @@ window.promptList = [
                         - lineType 默认值为0（实线）
 
                         参考资源（按需经 @uri 下钻 EDA 开发资料）：@resource_jlc_sch_wiring（导线/网络/网络标号电气连接机制）、@resource_jlc_sch_design_rule（网络规则/线宽/电源）。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "knowledge_tools",
-        "semantic_tags": ["调用要求", "subPartName", "分页", "lineType"],
-        "description": "知识叶:工具调用的特殊要求和注意事项(subPartName必填、invertY默认true、分页规则、lineType枚举等)。semantic_tags:[调用要求,subPartName,分页,lineType]。按需经 @knowledge_tools 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'knowledge_tools',
+		'semantic_tags': ['调用要求', 'subPartName', '分页', 'lineType'],
+		'description':
+			'知识叶:工具调用的特殊要求和注意事项(subPartName必填、invertY默认true、分页规则、lineType枚举等)。semantic_tags:[调用要求,subPartName,分页,lineType]。按需经 @knowledge_tools 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【工具特殊要求】
                         
                         各工具调用时的特殊要求和注意事项：
@@ -484,21 +500,22 @@ window.promptList = [
                            - color 可为字符串或 null，不允许 undefined
 
                         参考资源（按需经 @uri 下钻 EDA 开发资料）：@resource_jlc_sch_primitive（sch_Primitive* 系列创建接口与 done() 提交链）、@resource_jlc_sch_doc_format（文档格式字段说明）。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "knowledge_collision",
-        "semantic_tags": ["碰撞", "重试", "边界矩形"],
-        "description": "知识叶:统一图元碰撞检测机制说明(新图元与画布/元件/导线/引脚的距离检测,基于边界矩形,重试最多3次)。semantic_tags:[碰撞,重试,边界矩形]。按需经 @knowledge_collision 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'knowledge_collision',
+		'semantic_tags': ['碰撞', '重试', '边界矩形'],
+		'description':
+			'知识叶:统一图元碰撞检测机制说明(新图元与画布/元件/导线/引脚的距离检测,基于边界矩形,重试最多3次)。semantic_tags:[碰撞,重试,边界矩形]。按需经 @knowledge_collision 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【统一图元碰撞检测机制】
                         
                         必须使用统一图元碰撞检测机制检测所有碰撞，检测项目包括：
@@ -520,21 +537,22 @@ window.promptList = [
                         - 确保无碰撞或已记录违规项
 
                         参考资源（按需经 @uri 下钻 EDA 开发资料）：@resource_jlc_sch_primitive（图元创建与 done() 提交）、@resource_jlc_sch_design_rule（间距/碰撞规范）。
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "execution_react",
-        "semantic_tags": ["推理", "行动", "试错"],
-        "description": "执行叶:ReAct(推理+行动)执行模式,适用于需要逐步推理和行动的任务。semantic_tags:[推理,行动,试错]。按需经 @execution_react 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'execution_react',
+		'semantic_tags': ['推理', '行动', '试错'],
+		'description':
+			'执行叶:ReAct(推理+行动)执行模式,适用于需要逐步推理和行动的任务。semantic_tags:[推理,行动,试错]。按需经 @execution_react 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【执行模式：ReAct (Reasoning + Acting)】
                         
                         请按照以下步骤执行：
@@ -548,21 +566,21 @@ window.promptList = [
                         - 需要逐步探索和试错的任务
                         - 不确定具体执行路径的任务
                         - 需要根据中间结果调整策略的任务
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "execution_plan",
-        "semantic_tags": ["规划", "验证", "调整"],
-        "description": "执行叶:Plan(规划+执行)执行模式,适用于需要先规划后执行的任务。semantic_tags:[规划,验证,调整]。按需经 @execution_plan 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'execution_plan',
+		'semantic_tags': ['规划', '验证', '调整'],
+		'description': '执行叶:Plan(规划+执行)执行模式,适用于需要先规划后执行的任务。semantic_tags:[规划,验证,调整]。按需经 @execution_plan 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【执行模式：Plan (Planning + Execution)】
                         
                         请按照以下步骤执行：
@@ -580,21 +598,22 @@ window.promptList = [
                         - 复杂任务需要整体规划
                         - 需要确保所有检查点都通过的任务
                         - 需要按照标准流程执行的任务
-                        `
-                }
-            }
-        ]
-    },
-    {
-        "name": "execution_guidance",
-        "semantic_tags": ["按需获取", "checkpoint"],
-        "description": "执行叶:AI执行指导原则(按需获取规则、遵循流程提示节点、每节点自检检查点)。semantic_tags:[按需获取,checkpoint]。注意:getPrompt 按 name 字符串精确匹配,先经 listPrompts 查看提示清单,再按描述精确获取,禁止在全文盲目字符串匹配工作流。按需经 @execution_guidance 获取。",
-        "messages": [
-            {
-                "role": "system",
-                "content": {
-                    "type": "text",
-                    "text": `
+                        `,
+				},
+			},
+		],
+	},
+	{
+		'name': 'execution_guidance',
+		'semantic_tags': ['按需获取', 'checkpoint'],
+		'description':
+			'执行叶:AI执行指导原则(按需获取规则、遵循流程提示节点、每节点自检检查点)。semantic_tags:[按需获取,checkpoint]。注意:getPrompt 按 name 字符串精确匹配,先经 listPrompts 查看提示清单,再按描述精确获取,禁止在全文盲目字符串匹配工作流。按需经 @execution_guidance 获取。',
+		'messages': [
+			{
+				'role': 'system',
+				'content': {
+					'type': 'text',
+					'text': `
                         【执行指导原则】
                         
                         重要提示：
@@ -618,9 +637,9 @@ window.promptList = [
                         - 需要工具调用时：@knowledge_tools
                         - 需要碰撞检测时：@knowledge_collision
                         - 选用执行模式时：@execution_react / @execution_plan / @execution_guidance
-                        `
-                }
-            }
-        ]
-    }
+                        `,
+				},
+			},
+		],
+	},
 ];

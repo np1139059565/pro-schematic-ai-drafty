@@ -22,6 +22,25 @@ let PRIVATE_SERVER_URL = 'https://113.46.209.138'; // 私服地址
 let ARK_API_URL = 'https://ark.cn-beijing.volces.com/api/v3'; // API 基础地址
 let CUSTOM_API_URL = 'https://api.deepseek.com/v1'; // 自定义主流模型兼容端点默认地址（用户可在配置中覆盖）
 
+// 无状态模式(CC 协议/运行时降级/ARK 未开缓存服务)每轮全量重发历史,轮数不控则 token 随会话无界增长;
+// 有状态模式(Responses + 缓存服务)每轮仅发增量,不受影响
+const CC_HISTORY_KEEP_ROUNDS_DEFAULT = 10; // 缺省保留最近 N 个对话轮(首轮任务锚点恒额外保留)
+
+/**
+ * 读取上下文记忆轮数配置(配置页可改,localStorage 持久化,仅无状态全量历史模式生效)。
+ * 非法配置(空/非正整数)回落默认值,保证裁剪逻辑始终有可用的轮数。
+ * @returns {number} 生效的保留轮数
+ */
+function getCcHistoryKeepRounds() {
+	try {
+		// Number 而非 parseInt:严格判定,'2.5'/'abc'/'0' 等非法值一律回落默认,不走静默截断
+		const saved = Number(localStorage.getItem('cc_history_keep_rounds'));
+		return Number.isInteger(saved) && saved >= 1 ? saved : CC_HISTORY_KEEP_ROUNDS_DEFAULT;
+	} catch (error) {
+		return CC_HISTORY_KEEP_ROUNDS_DEFAULT; // localStorage 不可用时(如隐私模式)回落默认
+	}
+}
+
 /**
  * 获取私服地址
  * @returns {string} 私服地址
@@ -191,7 +210,11 @@ async function callPrivateChat(mhistory, previousResponseId = null, tools = [], 
 		requestBody = {
 			// fullHistory 为 prev_id 失效自愈重试标记:必须整段发送完整历史恢复上下文;
 			// 全量历史须转换为方舟标准 input 结构(自定义 toolCalls/tool 结构会被 400 拒绝)
-			input: stateless ? convertHistoryToResponsesInput(mhistory) : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]],
+			input: stateless
+				? convertHistoryToResponsesInput(trimHistoryForStateless(mhistory))
+				: isToolResultBatch
+					? mhistory
+					: [mhistory[mhistory.length - 1]],
 		};
 		// 获取用户API Key（用于在私服中认证身份和记录token使用）
 		const config = getConfig();
@@ -318,7 +341,11 @@ async function callArkChat(mhistory, previousResponseId = null, tools = [], sign
 			// model: config.model, // 模型名称
 			// fullHistory 为 prev_id 失效自愈重试标记:必须整段发送完整历史恢复上下文;
 			// 全量历史须转换为方舟标准 input 结构(自定义 toolCalls/tool 结构会被 400 拒绝)
-			input: stateless ? convertHistoryToResponsesInput(mhistory) : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]], // 工具结果批次整段发送,普通对话仅取最后一条
+			input: stateless
+				? convertHistoryToResponsesInput(trimHistoryForStateless(mhistory))
+				: isToolResultBatch
+					? mhistory
+					: [mhistory[mhistory.length - 1]], // 工具结果批次整段发送,普通对话仅取最后一条
 			store: stateless ? false : true, // 存储响应以便后续检索(未开启缓存服务时关闭存储)
 			caching: stateless ? undefined : { 'type': 'enabled' }, // 启用缓存(设置了缓存不需要一直传入tools;未开通缓存服务时不携带该字段)
 			temperature: 0.2, // 采样温度，降低随机性，使输出更确定
@@ -414,6 +441,39 @@ async function callArkChat(mhistory, previousResponseId = null, tools = [], sign
 function isCustomChatProtocol() {
 	const config = getConfig();
 	return config.mode === 'custom' && config.customProtocol === 'chat';
+}
+
+/**
+ * 无状态全量历史模式的历史裁剪:按对话轮滑动窗口控制全量重发的 token 体量。
+ * 轮定义:以 user 消息为起点,到下一条 user 消息之前(含期间的 assistant.toolCalls
+ * 与 role:'tool' 结果),因此工具调用的请求/结果恒在同一轮内,整轮裁剪不会破坏配对。
+ * 保留:头部 system 消息 + 完整首轮(任务锚点,防止长会话丢失原始需求) + 最近 N 轮;
+ * 中间轮直接丢弃,不注入合成消息。
+ * 通道无关:凡无状态全量重发历史的场景(CC 协议/私服与 ARK 运行时降级/ARK 未开缓存服务)均适用。
+ * @param {Array} mhistory - 完整会话历史(内部格式,见 convertHistoryToCCMessages 注释)
+ * @returns {Array} 裁剪后的历史;未超限或结构异常时原样返回,不影响原数组
+ */
+function trimHistoryForStateless(mhistory) {
+	if (!Array.isArray(mhistory)) return mhistory;
+	const head = []; // 首条 user 消息之前的消息(通常为 system)
+	const rounds = []; // 每个元素为一轮消息数组(以 user 起始)
+	let current = null; // 当前正在收集的轮
+	for (const item of mhistory) {
+		if (!item || typeof item !== 'object') continue; // 与转换器保持一致,跳过脏数据
+		if (item.role === 'user') {
+			current = [item];
+			rounds.push(current);
+		} else if (current) {
+			current.push(item); // 轮内的 assistant/tool 消息
+		} else {
+			head.push(item); // 尚未出现 user 前的 system 等消息
+		}
+	}
+	// 首轮 + 最近 N 轮即可覆盖全部时,裁剪无意义,原样返回
+	const keepRounds = getCcHistoryKeepRounds(); // 每次裁剪时读配置,配置页修改即时生效
+	if (rounds.length <= keepRounds + 1) return mhistory;
+	// 完整保留首轮作为任务锚点 + 最近 N 轮
+	return [...head, ...rounds[0], ...rounds.slice(-keepRounds).flat()];
 }
 
 /**
@@ -513,7 +573,7 @@ async function callCustomChatCompletions(mhistory, tools, signal) {
 		const config = getConfig();
 		requestBody = {
 			model: config.customModel,
-			messages: convertHistoryToCCMessages(mhistory), // 完整历史转为 CC messages
+			messages: convertHistoryToCCMessages(trimHistoryForStateless(mhistory)), // 历史按轮裁剪后转为 CC messages,防无状态全量重发无界膨胀
 			temperature: 0.2, // 与 Responses 通道保持一致的低随机性
 			tool_choice: 'auto', // 交由模型决定是否调用工具
 		};
@@ -600,7 +660,11 @@ async function callCustomChat(mhistory, previousResponseId = null, tools = [], s
 		// 复用与 callArkChat 完全一致的请求体结构（Responses API）,保证多轮/工具结果批次行为一致;
 		// 全量历史须转换为方舟标准 input 结构(自定义 toolCalls/tool 结构会被 400 拒绝)
 		requestBody = {
-			input: stateless ? convertHistoryToResponsesInput(mhistory) : isToolResultBatch ? mhistory : [mhistory[mhistory.length - 1]],
+			input: stateless
+				? convertHistoryToResponsesInput(trimHistoryForStateless(mhistory))
+				: isToolResultBatch
+					? mhistory
+					: [mhistory[mhistory.length - 1]],
 			store: stateless ? false : true,
 			caching: stateless ? undefined : { 'type': 'enabled' },
 			temperature: 0.2,
@@ -838,4 +902,5 @@ window.ArkAPI = {
 	isCustomChatProtocol, // 供 ai-chat.js 判断是否按 CC 无状态语义传参
 	isStatelessMode, // 集中判定无状态语义(CC 协议/运行时降级/ARK 未开启缓存服务),供传参决策
 	testConnection, // 供配置对话框「测试连接」按钮调用
+	getCcHistoryKeepRounds, // 供配置页回显上下文记忆轮数的当前生效值
 };

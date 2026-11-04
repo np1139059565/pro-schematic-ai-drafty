@@ -55,8 +55,8 @@ function computeBounds(pins, expandMil = 10) {
 	if (!Array.isArray(pins) || pins.length === 0) {
 		return [];
 	}
-	const xs = pins.map(p => p.x);
-	const ys = pins.map(p => p.y);
+	const xs = pins.map((p) => p.x);
+	const ys = pins.map((p) => p.y);
 	const minX = Math.min(...xs) - expandMil;
 	const maxX = Math.max(...xs) + expandMil;
 	const minY = Math.min(...ys) - expandMil;
@@ -65,6 +65,71 @@ function computeBounds(pins, expandMil = 10) {
 		{ x: minX, y: minY },
 		{ x: maxX, y: minY },
 		{ x: maxX, y: maxY },
-		{ x: minX, y: maxY }
+		{ x: minX, y: maxY },
 	];
+}
+
+/**
+ * 判断目标工具是否为需要原理图上下文的写操作(sch_ 域的创建/修改/删除)。
+ * 纯函数,名称归一化($ 与 . 分隔等价);读操作(getAll/get/search)与 PCB(pcb_/ipcb_)域不命中。
+ * @param {string} targetName 目标工具名,如 sch_PrimitiveCircle.create / sch_PrimitiveWire$createBatch
+ * @returns {boolean} 是否需要前置文档上下文守卫
+ */
+function isSchematicWriteTool(targetName) {
+	if (typeof targetName !== 'string') {
+		return false;
+	}
+	const dotName = targetName.replace('$', '.');
+	const dotIndex = dotName.lastIndexOf('.');
+	if (dotIndex <= 0) {
+		return false;
+	}
+	const className = dotName.slice(0, dotIndex);
+	const methodName = dotName.slice(dotIndex + 1);
+	return className.startsWith('sch_') && /^(create|createBatch|modify|delete|deleteBatch|remove)$/.test(methodName);
+}
+
+/**
+ * 原理图文档上下文守卫。
+ * 绘图写操作若在非原理图页(如 PCB,documentType=3)执行,图元会写入错误文档导致"画了却看不见";
+ * 依据 dmt_SelectControl.getCurrentDocumentInfo 的 documentType 判定:1=原理图页允许,其余阻断;
+ * 返回结构缺失时放行并告警(避免宿主 API 形状变化误伤全部绘图)。
+ * @throws {Error} 当前不是原理图页时抛出,错误信息附切换指引
+ */
+async function assertSchematicContext() {
+	const docInfo = await eda.dmt_SelectControl.getCurrentDocumentInfo();
+	const documentType = docInfo ? docInfo.documentType : undefined;
+	if (documentType === undefined || documentType === null) {
+		console.warn('[MCP] 文档守卫: getCurrentDocumentInfo 未返回 documentType,放行写操作');
+		return;
+	}
+	if (documentType !== 1) {
+		throw new Error(
+			`当前画布不是原理图页(documentType=${documentType}),已阻止 sch_ 绘图写操作;` +
+				'请先用 callTool 调用 dmt_EditorControl.activateDocument 切换到原理图页(documentType=1)后重试',
+		);
+	}
+}
+
+/**
+ * 图元创建回读验证(P1-8)。
+ * 创建并 done 提交后按 getAll 回读,确认图元真正落到当前文档画布;
+ * 以回读结果为最终判定依据,规避宿主 save/done 返回值语义不明的问题。
+ * @param {string} namespace 原生命名空间,如 sch_PrimitiveCircle
+ * @param {Object} createdPrimitive create 返回的图元实例(用于按 id 匹配)
+ * @returns {Promise<Object>} {total, confirmedInCurrentDocument, primitiveId};回读失败时 {verified:false, reason}
+ */
+async function verifyPrimitiveCreated(namespace, createdPrimitive) {
+	try {
+		const all = await eda[namespace].getAll();
+		const list = Array.isArray(all) ? all : all && Array.isArray(all.primitives) ? all.primitives : [];
+		const primitiveId =
+			createdPrimitive && typeof createdPrimitive === 'object'
+				? (createdPrimitive.primitiveId ?? createdPrimitive.uuid ?? createdPrimitive.id ?? null)
+				: null;
+		const confirmed = primitiveId ? list.some((p) => p && typeof p === 'object' && p.primitiveId === primitiveId) : null;
+		return { total: list.length, confirmedInCurrentDocument: confirmed, primitiveId };
+	} catch (error) {
+		return { verified: false, reason: error.message };
+	}
 }

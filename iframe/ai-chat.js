@@ -54,6 +54,8 @@ let customBaseUrlContainer; // 自定义 Base URL 配置项容器
 let configTestBtn; // 测试连接按钮
 let customProtocolContainer; // 自定义接口协议配置项容器
 let customProtocolSelect; // 自定义接口协议下拉框(responses/chat)
+let ccHistoryRoundsInput; // 上下文记忆轮数输入框(仅自定义模式 Chat Completions 协议生效)
+let ccHistoryRoundsContainer; // 上下文记忆轮数配置项容器
 let customModelContainer; // 自定义 Model 配置项容器
 let modelInfoEl; // 状态栏「当前模型」展示位
 let packageInfoEl; // 状态栏「已领取套餐」展示位
@@ -301,6 +303,8 @@ function init() {
 	configTestBtn = document.getElementById('configTestBtn'); // 获取测试连接按钮
 	customProtocolContainer = document.getElementById('customProtocolContainer'); // 获取自定义接口协议配置项容器
 	customProtocolSelect = document.getElementById('customProtocolSelect'); // 获取自定义接口协议下拉框
+	ccHistoryRoundsInput = document.getElementById('ccHistoryRoundsInput'); // 获取上下文记忆轮数输入框
+	ccHistoryRoundsContainer = document.getElementById('ccHistoryRoundsContainer'); // 获取上下文记忆轮数配置项容器
 	customModelContainer = document.getElementById('customModelContainer'); // 获取自定义 Model 配置项容器
 	privateServerUrlInput = document.getElementById('privateServerUrlInput'); // 获取私服服务器地址输入框
 	privateServerUrlContainer = document.getElementById('privateServerUrlContainer'); // 获取私服服务器地址配置项容器
@@ -329,6 +333,10 @@ function init() {
 	document.querySelectorAll('input[name="connMode"]').forEach((radio) => {
 		radio.addEventListener('change', handleConnectionModeChange); // 绑定模式切换事件
 	});
+	// 接口协议切换：联动显隐上下文记忆轮数配置(仅 Chat Completions 协议需要)
+	if (customProtocolSelect) customProtocolSelect.addEventListener('change', applyCcHistoryVisibility);
+	// 缓存服务切换：ARK 未开启时切全量历史模式,同样联动显隐上下文记忆轮数
+	if (arkCacheServiceSelect) arkCacheServiceSelect.addEventListener('change', applyCcHistoryVisibility);
 	// 输入框事件
 	messageInput.addEventListener('keydown', (e) => {
 		// 按 Enter 发送（Shift+Enter 换行）
@@ -1932,6 +1940,55 @@ function applyModeVisibility(mode) {
 	if (customProtocolContainer) customProtocolContainer.style.display = showCustom ? 'block' : 'none'; // 接口协议仅自定义模式可见
 	if (customModelContainer) customModelContainer.style.display = showCustom ? 'block' : 'none';
 	if (privateServerUrlContainer) privateServerUrlContainer.style.display = mode === 'private' ? 'block' : 'none'; // 仅私服模式显示服务器地址
+	applyCcHistoryVisibility(); // 上下文记忆轮数依赖模式与协议双重条件,统一联动
+}
+
+/**
+ * 上下文记忆轮数显隐联动:仅无状态全量历史模式下显示
+ * (自定义模型 + Chat Completions 协议,或 ARK 官网模式且缓存服务选「未开启」——
+ * 这些模式每轮全量重发历史,轮数配置才有意义;有状态的 Responses 续接模式增量发送无需此配置)。
+ * 由 applyModeVisibility(模式切换)、接口协议/缓存服务 change 事件共同触发。
+ */
+function applyCcHistoryVisibility() {
+	if (!ccHistoryRoundsContainer) return;
+	const modeRadio = document.querySelector('input[name="connMode"]:checked');
+	const mode = modeRadio ? modeRadio.value : connectionMode;
+	const isChatProtocol = customProtocolSelect && customProtocolSelect.value === 'chat';
+	const isArkCacheOff = mode === 'ark' && arkCacheServiceSelect && arkCacheServiceSelect.value === 'off';
+	ccHistoryRoundsContainer.style.display = (mode === 'custom' && isChatProtocol) || isArkCacheOff ? 'block' : 'none';
+}
+
+/**
+ * 持久化 ARK 缓存服务选项(仅 ARK 官网模式写入,其余模式不落键)。
+ * @param {string} mode 本次保存选中的连接模式
+ * @param {string} arkCacheService 缓存服务选项 on | off
+ */
+function persistArkCacheService(mode, arkCacheService) {
+	if (mode === 'ark') {
+		localStorage.setItem('ark_cache_service', arkCacheService);
+	}
+}
+
+/**
+ * 持久化上下文记忆轮数配置(配置对话框保存时调用)。
+ * 留空视为恢复默认(移除本地键);非法输入(0/负数/小数/非数字)提示错误并中断保存。
+ * @returns {boolean} true=已持久化(或恢复默认),可继续保存流程;false=校验失败,应中断保存
+ */
+function persistCcHistoryRounds() {
+	const raw = ccHistoryRoundsInput ? ccHistoryRoundsInput.value.trim() : '';
+	if (raw === '') {
+		localStorage.removeItem('cc_history_keep_rounds'); // 留空即恢复默认值
+		return true;
+	}
+	const rounds = parseInt(raw, 10);
+	// 严格校验正整数:拦截 0/负数/小数/非数字(与ark-api.js的兜底双保险,此处给用户即时反馈)
+	if (!Number.isInteger(rounds) || rounds < 1 || String(rounds) !== raw) {
+		updateStatus('上下文记忆轮数须为正整数(留空恢复默认 10)', 'error');
+		setTimeout(() => updateStatus('', ''), 2500);
+		return false;
+	}
+	localStorage.setItem('cc_history_keep_rounds', String(rounds));
+	return true;
 }
 
 /**
@@ -1985,6 +2042,8 @@ function handleConfigClick() {
 		arkCacheServiceSelect.value = localStorage.getItem('ark_cache_service') === 'off' ? 'off' : 'on';
 	}
 	privateServerUrlInput.value = currentPrivateServerUrl; // 设置私服服务器地址
+	// 回显上下文记忆轮数(读当前生效值:未配置时显示默认 10)
+	if (ccHistoryRoundsInput) ccHistoryRoundsInput.value = String(window.ArkAPI.getCcHistoryKeepRounds());
 
 	// 选中对应模式 radio（仅同步界面，不触发清空）
 	const radio = document.querySelector(`input[name="connMode"][value="${mode}"]`);
@@ -2106,9 +2165,10 @@ function handleSaveConfig() {
 
 		// 持久化 ARK 缓存服务选项(仅 ARK 官网模式语义;两种形态对客户端全量历史互相兼容,
 		// 切换不产生上下文污染,因此不计入 configChanged、不清空对话记录)
-		if (newMode === 'ark') {
-			localStorage.setItem('ark_cache_service', arkCacheService);
-		}
+		persistArkCacheService(newMode, arkCacheService);
+
+		// 持久化上下文记忆轮数(仅 CC 协议语义;留空恢复默认,不计入 configChanged、不清空对话记录)
+		if (!persistCcHistoryRounds()) return; // 校验失败已提示,中断保存
 
 		// 修改 API 后清空页面记录，避免旧历史被不同服务端返回的上下文污染
 		if (configChanged) {

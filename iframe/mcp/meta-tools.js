@@ -95,6 +95,60 @@ const CALL_TOOL_SCHEMA = {
 	source: 'meta',
 	domain: null,
 };
+/**
+ * callTool 调用前置检查:① 参数按 inputSchema 校验;② 原理图绘图写操作的文档上下文守卫。
+ * 守卫防止在 PCB 等非原理图页创建图元导致"画了却看不见"(难点复盘 #1),
+ * 实现见 curated-tools/shared.js,经 callTool 唯一入口覆盖精选与原生两条路径。
+ * @param {string} targetName 解析后的真实目标工具名(如 sch_PrimitiveCircle$create)
+ * @param {Object} toolArgs 解包后的真实工具参数
+ * @param {Object} toolSchema 目标工具定义(含 inputSchema)
+ * @returns {Promise<Object|null>} 命中校验/守卫时返回错误文本响应,全部通过返回 null
+ */
+async function preCallCheck(targetName, toolArgs, toolSchema) {
+	const validateResult = validateArguments(toolArgs, toolSchema?.inputSchema);
+	if (validateResult !== null) {
+		return buildTextResponse(`工具参数验证失败: ${validateResult}`, false);
+	}
+	if (typeof isSchematicWriteTool === 'function' && isSchematicWriteTool(targetName)) {
+		try {
+			await assertSchematicContext();
+		} catch (guardError) {
+			return buildTextResponse(guardError.message, true);
+		}
+	}
+	return null;
+}
+
+/**
+ * 查找可被 callTool 调度的目标工具定义(仅查证,不做可用性裁决)。
+ * 查找顺序与调度优先级一致:元工具池 → 原生 EDA API 清单。
+ * @param {string} targetName 真实目标工具名($ 与 . 分隔名均按原名匹配)
+ * @returns {Object|null} 工具定义;两池均未命中返回 null
+ */
+function findCallableTool(targetName) {
+	return (
+		window.mcpProtocol.listTools().tools.find((tool) => tool.name === targetName) ||
+		window.edaApi.find((tool) => tool.name === targetName) ||
+		null
+	);
+}
+
+/**
+ * 解析 callTool 目标工具的定义与可用性(存在性 + 启用状态一并裁决)。
+ * @param {string} targetName 真实目标工具名
+ * @returns {{schema: Object}|{error: Object}} 可用时返回 schema,否则返回错误文本响应
+ */
+function resolveCallableTool(targetName) {
+	const schema = findCallableTool(targetName);
+	if (schema === null) {
+		return { error: buildTextResponse(`工具不存在: ${targetName}`, true) };
+	}
+	if (schema.enabled === false) {
+		return { error: buildTextResponse(`工具已禁用: ${targetName}`, true) };
+	}
+	return { schema };
+}
+
 async function callTool(params) {
 	try {
 		// dispatcher 设计说明(避免误判为"自调用 bug"):
@@ -111,17 +165,16 @@ async function callTool(params) {
 		const isDispatch = name === 'callTool' && args && typeof args.arguments === 'object' && args.arguments !== null;
 		const toolArgs = isDispatch ? args.arguments : args || {};
 		const [className, methodName] = targetName.split('.');
-		const toolSchema =
-			window.mcpProtocol.listTools().tools.find((tool) => tool.name === targetName) || window.edaApi.find((tool) => tool.name === targetName);
-		if (!toolSchema) {
-			return buildTextResponse(`工具不存在: ${targetName}`, true);
+		// 目标工具解析与可用性裁决(存在性/禁用) + 前置检查(参数校验/文档守卫),
+		// 均抽离以控制 callTool 圈复杂度
+		const resolved = resolveCallableTool(targetName);
+		if (resolved.error) {
+			return resolved.error;
 		}
-		if (toolSchema.enabled === false) {
-			return buildTextResponse(`工具已禁用: ${targetName}`, true);
-		}
-		const validateResult = validateArguments(toolArgs, toolSchema?.inputSchema);
-		if (validateResult !== null) {
-			return buildTextResponse(`工具参数验证失败: ${validateResult}`, false);
+		const toolSchema = resolved.schema;
+		const preCheckError = await preCallCheck(targetName, toolArgs, toolSchema);
+		if (preCheckError !== null) {
+			return preCheckError;
 		}
 		const curatedKey = targetName.replace('.', '$');
 		// 仅排除 callTool 壳自身:防止 window.mcpProtocol[name] 把协议壳自身当实现引发自递归;
@@ -201,19 +254,20 @@ function listTools({ scenario, limit = 50 } = {}) {
 }
 
 /**
- * 列出资源索引(不含正文)。
- * 无关键词时仅返回根索引资源(无根索引则取首条);有关键词时按 name/description 模糊过滤。
- * 资源正文需经 readResource(uri) 按需下钻获取。
- * @param {{keywords?: string}} [params] 可选,按名称/描述模糊过滤
- * @returns {{resources: Array}} 资源元数据列表
+ * 列出资源索引(不含正文,两段式读取的第一段)。
+ * 无关键词时返回全部资源元信息(uri/name/description/mimeType + total);有关键词时按 uri/name/description 模糊过滤。
+ * 模型按 description 判断相关性后,经 readResource(uri) 精读全文,避免凭猜测误读多个无关资源全文。
+ * @param {{keywords?: string}} [params] 可选,按 uri/名称/描述模糊过滤
+ * @returns {{resources: Array, total?: number}} 资源元数据列表(无参时附 total 总数)
  */
 const LIST_RESOURCES_SCHEMA = {
 	name: 'listResources',
-	description: '列出资源索引:无参仅返回根索引单条,有参按关键词过滤,均不含正文',
+	description:
+		'列出资源索引(仅 uri/name/description,不含正文):无参返回全部资源元信息(约41条,按 description 自主判断相关性后经 readResource({uri}) 精读);有参按关键词/uri 过滤;避免凭猜测直接 readResource 多个资源全文',
 	inputSchema: {
 		type: 'object',
 		properties: {
-			keywords: { type: 'string', description: '可选,按名称/描述模糊过滤资源(不返回正文)' },
+			keywords: { type: 'string', description: '可选,按 uri/名称/描述模糊过滤资源(不返回正文)' },
 		},
 		required: [],
 	},
@@ -230,15 +284,21 @@ function listResources({ keywords } = {}) {
 			description,
 			mimeType: mime_type || mimeType,
 		}));
-	if (!keywords) {
-		const root = metas.filter((r) => r.uri === 'resource_jlc_sch_overview');
-		return { resources: root.length > 0 ? root : metas.slice(0, 1) };
+	// 关键词过滤:同时匹配 uri(正文内 @uri 引用可直接反查)/名称/描述
+	if (keywords) {
+		const kw = String(keywords).toLowerCase();
+		return {
+			resources: metas.filter(
+				(r) =>
+					r.uri.toLowerCase().includes(kw) ||
+					(r.name && r.name.toLowerCase().includes(kw)) ||
+					(r.description && r.description.toLowerCase().includes(kw)),
+			),
+		};
 	}
-	const kw = String(keywords).toLowerCase();
-	const filtered = metas.filter(
-		(r) => (r.name && r.name.toLowerCase().includes(kw)) || (r.description && r.description.toLowerCase().includes(kw)),
-	);
-	return { resources: filtered.slice(0, 50) };
+	// 无参直出全量元信息:模型按 description 判断相关性后精确 readResource,
+	// 免去"先读 overview 全文再下钻"的额外一轮与无关资源误读(难点复盘:8 次 readResource 大半无关)
+	return { resources: metas, total: metas.length };
 }
 
 /**
@@ -339,7 +399,9 @@ async function getPrompt(params) {
 		throw new Error(`提示不存在: ${name}`);
 	}
 	const messages = prompt?.messages.filter((message) => ([null, undefined].includes(_args) ? true : message.role === _args.name)) || [];
-	messages.map((m) => (m.content.text = m.content.text.replace(/\n\s+/g, '\n')));
+	messages.forEach((m) => {
+		m.content.text = m.content.text.replace(/\n\s+/g, '\n'); // 去除提示正文中的行首缩进,压缩 token
+	});
 	return {
 		description: prompt?.description || '',
 		messages: messages,
@@ -348,18 +410,20 @@ async function getPrompt(params) {
 
 /**
  * 按 name 获取单个工具的完整定义(含 inputSchema 参数表)。
- * 合并元工具池与精选工具池实时查找,name 需与 listTools 返回的 name 一致;
- * 未找到或已禁用时返回错误文本响应。用于模型在 listTools 摘要后下钻获取完整参数。
+ * 查找顺序与 callTool 调度优先级保持一致:① 元工具池 ② 精选工具池 ③ 原生 EDA API 清单;
+ * 原生查找支持 $ 分隔名自动转换为 . 分隔名(如 sch_PrimitiveCircle$create → sch_PrimitiveCircle.create),
+ * 若原生 API 存在同名精选封装则优先返回精选定义(与 callTool 优先调度精选工具一致)。
+ * 未找到或已禁用时返回错误文本响应。用于模型在 listTools/searchTools 摘要后下钻获取完整参数。
  * @param {{name: string}} params 目标工具名称
  * @returns {{name: string, description: string, inputSchema: Object}|{content: Array, isError: boolean}} 完整定义或错误响应
  */
 const GET_TOOL_SCHEMA = {
 	name: 'getTool',
-	description: '按 name 获取单个工具的完整定义(含 inputSchema 参数表)',
+	description: '按 name 获取单个工具的完整定义(含 inputSchema 参数表),支持元工具/精选工具/EDA 原生 API(eda.*)',
 	inputSchema: {
 		type: 'object',
 		properties: {
-			name: { type: 'string', description: '工具名称(与 listTools 返回的 name 一致)' },
+			name: { type: 'string', description: '工具名称(与 listTools/searchTools 返回的 name 一致)' },
 		},
 		required: ['name'],
 	},
@@ -371,17 +435,27 @@ function getTool({ name }) {
 	if (!name) {
 		return buildTextResponse('缺少必需参数: name', false);
 	}
-	const tool = window.mcpProtocol.metaToolSchemas
+	// ① 元工具池 + 精选工具池
+	const poolTool = window.mcpProtocol.metaToolSchemas
 		.concat(window.curatedTools.curatedToolSchemas)
 		.find((t) => t.name === name && t.enabled !== false);
-	if (!tool) {
-		return buildTextResponse(`工具不存在或未启用: ${name}`, true);
+	if (poolTool) {
+		return { name: poolTool.name, description: poolTool.description || '', inputSchema: poolTool.inputSchema || {} };
 	}
-	return {
-		name: tool.name,
-		description: tool.description || '',
-		inputSchema: tool.inputSchema || {},
-	};
+	// ② 原生 EDA API 清单兜底:精确命中,或 $ 分隔名转 . 分隔名后命中
+	const edaApiList = window.edaApi || [];
+	const nativeTool =
+		edaApiList.find((t) => t.name === name && t.enabled !== false) ||
+		(name.includes('$') ? edaApiList.find((t) => t.name === name.replace(/\$/g, '.') && t.enabled !== false) : null);
+	if (nativeTool) {
+		// 存在同名精选封装(类$方法)时优先返回精选定义,与 callTool 的调度优先级一致
+		const curated = (window.curatedTools.curatedToolSchemas || []).find(
+			(t) => t.name === nativeTool.name.replace('.', '$') && t.enabled !== false,
+		);
+		const target = curated || nativeTool;
+		return { name: target.name, description: target.description || '', inputSchema: target.inputSchema || {} };
+	}
+	return buildTextResponse(`工具不存在或未启用: ${name}(可用 searchTools({keywords}) 检索正确的工具名)`, true);
 }
 
 /**
@@ -434,13 +508,15 @@ function searchResources({ keywords, limit = 10 } = {}) {
  * 检索原生 EDA API(eda.*)工具。
  * 原生 API 体量大,强制关键词检索(必填);按关键词命中数降序返回前 N 条,
  * 命中精选封装(window.curatedTools)时优先以其描述替换并叠加 semantic_tags 权重;
- * limit 控制返回条数(1~30)。
+ * 结果携带完整 inputSchema(实测原生 schema 平均约 121 字符,结构化摘要反而膨胀,
+ * 搜索成本主要由重复检索次数贡献,应配合 getTool 精准下钻减少往返);limit 控制返回条数(1~30)。
  * @param {{keywords: string[], limit?: number}} [params] keywords 检索词,limit 条数上限
  * @returns {Array} 降序排列的匹配工具列表(含 name/description/inputSchema/score/domain)
  */
 const SEARCH_TOOLS_SCHEMA = {
 	name: 'searchTools',
-	description: '检索原生 EDA API(eda.*):按关键词命中数降序返回前 N 条,命中精选封装时优先以其描述替换;原生 API 体量大,须用密集关键词检索',
+	description:
+		'检索原生 EDA API(eda.*):按关键词命中数降序返回前 N 条,命中精选封装时优先以其描述替换;结果含完整 inputSchema 可直接构造 callTool 参数;原生 API 体量大,须用密集关键词检索以减少重复搜索',
 	inputSchema: {
 		type: 'object',
 		properties: {

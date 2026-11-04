@@ -128,6 +128,16 @@
 							<option value="chat">Chat Completions（DeepSeek 等）</option>
 						</select>
 					</div>
+					<!-- 上下文记忆轮数(仅无状态全量历史模式生效:CC 协议 / ARK 未开缓存服务时每轮全量重发历史,由本值控制裁剪) -->
+					<div class="config-item" id="ccHistoryRoundsContainer" style="display: none">
+						<label for="ccHistoryRoundsInput">上下文记忆轮数:</label>
+						<input type="number" id="ccHistoryRoundsInput" class="config-input" min="1" step="1" placeholder="默认 10" />
+						<div class="config-hint">
+							AI 能记住最近多少轮对话：<strong>调大</strong>更不容易忘记早先的要求，但每次请求更耗
+							token（响应变慢、费用增加）；<strong>调小</strong>省 token，但 AI 可能忘记较早的对话内容。默认
+							10，一般无需修改。仅在按轮全量发送历史的模式下生效（自定义模型的 Chat Completions 协议、ARK 官网未开启缓存服务等）。
+						</div>
+					</div>
 				</div>
 				<div class="config-footer">
 					<button id="configTestBtn" class="config-cancel-btn">测试连接</button>
@@ -190,6 +200,7 @@
 		<script src="/iframe/mcp/curated-tools/component.js"></script>
 		<script src="/iframe/mcp/curated-tools/wiring.js"></script>
 		<script src="/iframe/mcp/curated-tools/selection.js"></script>
+		<script src="/iframe/mcp/curated-tools/primitives.js"></script>
 		<script src="/iframe/mcp/curated-tools/index.js"></script>
 		<script src="/iframe/mcp/meta-tools.js"></script>
 		<script src="/iframe/mcp/resources.js"></script>
