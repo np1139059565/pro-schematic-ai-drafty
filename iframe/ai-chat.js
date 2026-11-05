@@ -44,6 +44,8 @@ let usePrivateServerCheckbox; // 使用私服复选框（旧版遗留，仅保�
 let customApiKeyInput; // 自定义模式 API Key 输入框
 let customBaseUrlInput; // 自定义模式 Base URL 输入框
 let customModelInput; // 自定义模式 Model 输入框
+let customProtocolInput; // 自定义模式接口协议下拉框
+let customProtocolContainer; // 协议配置项容器
 let arkApiKeyContainer; // API Key 配置项容器（按模式显隐）
 let privateServerUrlContainer; // 私服服务器地址配置项容器（仅私服模式显隐）
 let privateServerUrlInput; // 私服服务器地址输入框
@@ -290,6 +292,8 @@ function init() {
 	customApiKeyContainer = document.getElementById('customApiKeyContainer'); // 获取自定义 API Key 配置项容器
 	customBaseUrlContainer = document.getElementById('customBaseUrlContainer'); // 获取自定义 Base URL 配置项容器
 	customModelContainer = document.getElementById('customModelContainer'); // 获取自定义 Model 配置项容器
+	customProtocolInput = document.getElementById('customProtocolInput'); // 获取自定义接口协议下拉框
+	customProtocolContainer = document.getElementById('customProtocolContainer'); // 获取协议配置项容器
 	privateServerUrlInput = document.getElementById('privateServerUrlInput'); // 获取私服服务器地址输入框
 	privateServerUrlContainer = document.getElementById('privateServerUrlContainer'); // 获取私服服务器地址配置项容器
 	modelInfoEl = document.getElementById('modelInfo'); // 获取状态栏模型信息展示位
@@ -1835,6 +1839,7 @@ function applyModeVisibility(mode) {
 	if (customApiKeyContainer) customApiKeyContainer.style.display = showCustom ? 'block' : 'none';
 	if (customBaseUrlContainer) customBaseUrlContainer.style.display = showCustom ? 'block' : 'none';
 	if (customModelContainer) customModelContainer.style.display = showCustom ? 'block' : 'none';
+	if (customProtocolContainer) customProtocolContainer.style.display = showCustom ? 'block' : 'none'; // 协议仅自定义模式需要
 	if (privateServerUrlContainer) privateServerUrlContainer.style.display = (mode === 'private') ? 'block' : 'none'; // 仅私服模式显示服务器地址
 }
 
@@ -1881,6 +1886,10 @@ function handleConfigClick() {
 	customApiKeyInput.value = customKey; // 设置自定义 API Key
 	customBaseUrlInput.value = customBaseUrl; // 设置自定义 Base URL
 	customModelInput.value = customModel; // 设置自定义 Model
+	// 回填接口协议：未保存过时按标准兼容协议作为默认值
+	if (customProtocolInput) {
+		customProtocolInput.value = localStorage.getItem('custom_protocol') || 'openai';
+	}
 	privateServerUrlInput.value = currentPrivateServerUrl; // 设置私服服务器地址
 
 	// 选中对应模式 radio（仅同步界面，不触发清空）
@@ -1958,6 +1967,8 @@ function handleSaveConfig() {
 	localStorage.setItem('private_server_url', privateServerUrl); // 保存私服服务器地址
 		window.ArkAPI.updateConfig(apiKey, model); // 更新核心配置
 		window.ArkAPI.updateConnectionConfig(newMode, customKey, customBaseUrl, customModel); // 更新模式与自定义配置
+		// 保存接口协议：决定端点路径与工具嵌套层级，切换后需重开对话才完全生效
+		localStorage.setItem('custom_protocol', (customProtocolInput && customProtocolInput.value) || 'openai');
 
 		// 关闭配置对话框
 		handleCloseConfig(); // 关闭对话框

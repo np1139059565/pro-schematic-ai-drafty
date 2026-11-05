@@ -105,6 +105,13 @@
 					<label for="customModelInput">Model:</label>
 					<input type="text" id="customModelInput" class="config-input" placeholder="如 deepseek-chat" />
 				</div>
+				<div class="config-item custom-only" id="customProtocolContainer">
+					<label for="customProtocolInput">接口协议:</label>
+					<select id="customProtocolInput" class="config-input">
+						<option value="openai">OpenAI 兼容（/chat/completions）</option>
+						<option value="ark">火山方舟（/responses）</option>
+					</select>
+				</div>
 			</div>
 				<div class="config-footer">
 					<button id="configSaveBtn" class="config-save-btn">保存</button>
