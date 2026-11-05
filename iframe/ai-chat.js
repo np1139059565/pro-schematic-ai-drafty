@@ -856,7 +856,7 @@ function refreshModelInfo() {
 	if (connectionMode === 'private') {
 		const apiKey = localStorage.getItem('api_key') || '';
 		if (!apiKey) { modelInfoEl.textContent = '模型: 未登录'; return; }
-		fetch(`${getPrivateServerUrl()}/api/model-info?user_api_key=${encodeURIComponent(apiKey)}`)
+		fetch(`${getPrivateServerUrl()}/api/model-info`, { headers: { 'X-Api-Key': apiKey } })
 			.then(r => r.json().catch(() => ({})))
 			.then(d => { modelInfoEl.textContent = (d && d.model) ? `模型: ${d.model}` : '模型: 未知'; })
 			.catch(() => { modelInfoEl.textContent = '模型: 未知'; });
@@ -879,7 +879,7 @@ function refreshPackageInfo() {
 	if (connectionMode !== 'private') { packageInfoEl.textContent = ''; return; }
 	const apiKey = localStorage.getItem('api_key') || '';
 	if (!apiKey) { packageInfoEl.textContent = ''; return; }
-	fetch(`${getPrivateServerUrl()}/api/user/package?user_api_key=${encodeURIComponent(apiKey)}`)
+	fetch(`${getPrivateServerUrl()}/api/user/package`, { headers: { 'X-Api-Key': apiKey } })
 		.then(r => r.json().catch(() => ({})))
 		.then(d => {
 			if (!d || !d.claimed) { packageInfoEl.textContent = ''; return; }
